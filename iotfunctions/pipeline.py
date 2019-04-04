@@ -880,7 +880,7 @@ class JobController(object):
     # aggegregating data, writing data and merging the results of 
     # the execution of a stage with data produced from prior stages
     data_aggregator = DataAggregator
-    data_writer = DataWriter
+    data_writer = Db2DataWriter
     data_merge = DataMerge
     
     def __init__ (self,payload,**kwargs):
@@ -995,8 +995,16 @@ class JobController(object):
                                                     granularity = None,
                                                     meta = build_metadata)
         
+        params = {
+            'db_connection' : self.get_payload_param('db',None).connection,
+            'schema_name' : self.get_payload_param('_db_schema',None),
+            'grains_metadata' : self.get_payload_param('_granularities_dict',None),
+            'data_item_metadata' : self.get_payload_param('_data_items',None)
+            }
+        
         # Add a data write to spec
-        data_writer = self.data_writer(name = 'data_writer_input_level_')
+        data_writer = self.data_writer(name = 'data_writer_input_level_',
+                                       **params)
         build_metadata['spec'].append(data_writer)
         
         # build of input level is complete
