@@ -22,6 +22,8 @@ import pandas as pd
 import warnings
 from pandas.api.types import (is_bool_dtype, is_numeric_dtype, is_string_dtype,
                               is_datetime64_any_dtype)
+from sqlalchemy import (Table, Column, Integer, SmallInteger, String,
+                        DateTime, Float, and_, func, select)
 
 DATA_ITEM_TYPE_BOOLEAN = 'BOOLEAN'
 DATA_ITEM_TYPE_NUMBER = 'NUMBER'
@@ -459,9 +461,10 @@ class DataWriter(object):
     
     produces_output_items = False
     
-    def __init__(self,name):
+    def __init__(self,name,**params):
         
         self.name = name
+        self.set_params(**params)
         
     def execute(self,df=None,start_ts=None,end_ts=None,entities=None):
                 
@@ -469,6 +472,14 @@ class DataWriter(object):
         df.to_csv(filename)
         logger.debug('Wrote data to filename %s',filename)
         return df
+    
+    def set_params(self, **params):
+        '''
+        Set parameters based using supplied dictionary
+        '''
+        for key,value in list(params.items()):
+            setattr(self, key, value)
+        return self    
     
 class DataReader(object):
     '''
@@ -891,7 +902,14 @@ class JobController(object):
             name = 'anonymous_payload_%s' %(payload.__class__.__name__)
             self.payload.name = name
         self.name = name
+        # kwargs can be used to override default job controller and payload
+        # parameters. All kwargs will be copied onto both objects.
+        self.set_params(**kwargs)
         self.set_payload_params(**kwargs)
+        
+        #create a job log
+        self.job_log = JobLog(self)
+        
         self.stage_metadata = self.get_payload_param('_stages',None)
         if self.stage_metadata is None:
             raise ValueError((
@@ -901,7 +919,6 @@ class JobController(object):
                     ' returns an appropriate dict containing all of the'
                     ' metadata for the job stages that will be executed. '
                     ))
-        self.job_log = JobLog(self)
         # Assemble a collection of candidate schedules to execute
         # If the payload does not have a schedule use the default
         schedules = self.get_payload_param('_schedules_dict',{})
@@ -1882,8 +1899,15 @@ class JobController(object):
                 logger.debug('Removed stages: %s',removed)
         
         return job_spec
-
     
+    def set_params(self, **params):
+        '''
+        Set parameters based using supplied dictionary
+        '''
+        for key,value in list(params.items()):
+            setattr(self, key, value)
+        return self
+
     def set_payload_params(self,**params):
         '''
         Add parameters to the payload
@@ -1913,30 +1937,62 @@ class JobController(object):
         
 class JobLog(object):
     
-    def __init__(self,job):
+    def __init__(self,job,table_name='job_log'):
         
         self.job = job
-        self.log = {}
+        self.table_name = table_name
+        self.db = self.job.get_payload_param('db',None)
+        if self.db is None:
+            raise RuntimeError(('The job payload does not have a valid'
+                                ' db object. Unable to establish a database'
+                                ' connection'))
+        kw = {
+             'schema' : self.job.get_payload_param('_db_schema',None)
+             }
+        
+        self.table = Table(self.table_name, self.db.metadata,
+                Column('object_type', String(255)),
+                Column('object_name', String(255)),
+                Column('schedule', String(255)),
+                Column('last_update', DateTime()),
+                Column('trace',String(2000)),
+                **kw
+                )
+        
+        self.db.metadata.create_all(self.db.connection)
         
     def write (self,name,schedule,timestamp,trace=None):
         
-        self.log[(name,schedule)] = timestamp
+        self.db.start_session()
+        ins = self.table.insert().values(object_type = self.job.payload.__class__.__name__,
+                                   object_name = name,
+                                   schedule = schedule,
+                                   last_update = timestamp,
+                                   trace = trace
+                                   )
+        self.db.connection.execute(ins)
         logger.debug((
                 'Completed execution. Wrote to job log (%s,%s): %s'),
                 name,schedule,timestamp
                 )
-                    
-        print ('TBD: Persist the job log to a table')
-                    
+        self.db.commit()
         
     def get_last_execution_date( self,name, schedule):
         
-        try:
-            return self.log[(name,schedule)]
-        except KeyError:
-            return None
+        '''
+        Last execution date for payload object name for particular schedule
+        '''
         
-    
+        col = func.max(self.table.c['last_update'])
+        query = select([col.label('last_update')]).where(and_(
+                self.table.c['object_type'] == self.job.payload.__class__.__name__,
+                self.table.c['object_name'] == name,
+                self.table.c['schedule'] == schedule
+                ))
+        result = self.db.connection.execute(query).first()
+        
+        return result[0]
+            
     
 class ExpressionExecutor(object):
     '''
