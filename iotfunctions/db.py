@@ -9,6 +9,7 @@
 # *****************************************************************************
 
 import os
+import sys
 import datetime as dt
 import logging
 import urllib3
@@ -16,6 +17,8 @@ import json
 import inspect
 import pandas as pd
 import subprocess
+import gzip
+
 from pandas.api.types import is_string_dtype, is_numeric_dtype, is_bool_dtype, is_datetime64_any_dtype, is_dict_like
 from sqlalchemy import Table, Column, Integer, SmallInteger, String, DateTime, MetaData, ForeignKey, create_engine, Float, func, and_, or_
 from sqlalchemy.sql.sqltypes import TIMESTAMP,VARCHAR
@@ -23,6 +26,7 @@ from sqlalchemy.sql import select
 from sqlalchemy.orm.session import sessionmaker
 from sqlalchemy.exc import NoSuchTableError
 from .util import CosClient, resample
+from .enginelog import EngineLogging
 from . import metadata as md
 from . import pipeline as pp
 
@@ -209,7 +213,19 @@ class Database(object):
             connection_kwargs = {}
             msg = 'Created a default sqlite database. Database file is in your working directory. Filename is sqldb.db'
             logger.info(msg)
-                
+
+        try:
+            self.cos_client = CosClient(self.credentials)
+        except KeyError:
+            msg = 'Unable to setup a cos client due to missing credentials. COS writes disabled'
+            logger.warning(msg)
+            self.cos_client = None
+        else:
+            msg = 'created a CosClient object'
+            logger.debug(msg)
+
+        EngineLogging.set_cos_client(self.cos_client)
+
         self.connection =  create_engine(connection_string, echo = echo, **connection_kwargs)
         self.Session = sessionmaker(bind=self.connection)
 
@@ -222,17 +238,8 @@ class Database(object):
             self.session = None
         self.metadata = MetaData(self.connection)
         logger.debug('Db connection established')
+
         self.http = urllib3.PoolManager()
-        try:
-            self.cos_client = CosClient(self.credentials)
-        except KeyError:
-            msg = 'Unable to setup a cos client due to missing credentials. COS writes disabled'
-            logger.warning(msg)
-            self.cos_client = None
-        else:
-            msg = 'created a CosClient object'
-            logger.debug(msg)
-            
         #cache entity types
         self.entity_type_metadata = {}
         metadata = self.http_request(object_type='allEntityTypes',
@@ -1719,4 +1726,3 @@ class SlowlyChangingDimension(BaseTable):
         self.property_name = Column(property_name,datatype)
         self.id_col = Column(self._entity_id,String(50))
         super().__init__(name,database,self.id_col,self.start_date,self.end_date,self.property_name,**kw )
-

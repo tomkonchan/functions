@@ -9,13 +9,14 @@
 # *****************************************************************************
 
 import logging
-import json
 import re
 import datetime as dt
 import numpy as np
-import sys
 import ibm_db
+import time
+
 from . import dbhelper
+from .enginelog import EngineLogging
 from collections import OrderedDict
 from .util import log_df_info
 import pandas as pd
@@ -1288,6 +1289,9 @@ class JobController(object):
                     ))
         else:
             execute_until = execute_date
+                        
+        EngineLogging.finish_setup_log()
+        
         #process continuously while job until time is up
         #after time is up, job will be end. An external scheduler can create
         # a new one to replace it.
@@ -1296,6 +1300,7 @@ class JobController(object):
         execution_counter = 0
         constants = {}
         while execute_date <= execute_until:
+            EngineLogging.start_run_log(self.payload.tenant_id, self.payload.name)
             logger.debug ((
                     'Starting execution number: %s with execution date: %s'),
                     execution_counter, execute_date
@@ -1416,6 +1421,8 @@ class JobController(object):
             
             execution_counter += 1
             execute_date = dt.datetime.utcnow()
+            
+            EngineLogging.finish_run_log()
             
     def execute_stages(self,stages,df,start_ts,end_ts,constants=None):
         '''
