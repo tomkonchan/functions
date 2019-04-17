@@ -21,7 +21,7 @@ def run(args):
             
     except Exception as ex:
         logger.error('The startup of engine failed: %s' % str(ex), exc_info=True)
-        return
+        return -1
 
     try:
         logger.info('tenant id = %s, entity type = %s' % (args['tenant_id'], args['entity_type']))
@@ -33,6 +33,9 @@ def run(args):
     except Exception as ex:
         logger.error('The engine stopped execution with the following exception: %s' % str(ex), exc_info=True)
         # kohlmann dblogging.lastupdate(error)
+        return -1
     finally:   
         EngineLogging.finish_setup_log()
         EngineLogging.finish_run_log()
+
+    return 0
