@@ -15,6 +15,8 @@ import numpy as np
 import json
 import importlib
 import time
+import threading
+import warnings
 from collections import OrderedDict, defaultdict
 import pandas as pd
 from collections import OrderedDict
@@ -215,10 +217,10 @@ class EntityType(object):
     db: Database object
         Contains the connection info for the database
     *args:
-        Additional positional arguments are used to add the list of SQL Alchemy Column
-        objects contained within this table. Similar to the style of a CREATE TABLE sql statement.
-        There is no need to specify column names if you are using an existing database table as
-        an entity type.
+        Additional positional arguments are used to add the list of SQL Alchemy
+        Column objects contained within this table. Similar to the style of a
+        CREATE TABLE sql statement. There is no need to specify column names 
+        if you are using an existing database table as an entity type.
     **kwargs
         Additional keywork args. 
         _timestamp: str
@@ -226,8 +228,10 @@ class EntityType(object):
     '''    
     
     auto_create_table = True        
-    log_table = 'KPI_LOGGING'
-    checkpoint_table = 'KPI_CHECKPOINT'
+    log_table = 'KPI_LOGGING' #deprecated, to be removed
+    checkpoint_table = 'KPI_CHECKPOINT' #deprecated,to be removed
+    default_backtrack = None
+    trace_df_changes = False
     # These two columns will be available in the dataframe of a pipeline
     _entity_id = 'deviceid' #identify the instance
     _timestamp_col = '_timestamp' #copy of the event timestamp from the index
@@ -265,6 +269,9 @@ class EntityType(object):
     _pre_agg_rules = None # pandas agg dictionary containing list of aggregates to apply for each item
     _pre_agg_outputs = None #dictionary containing list of output items names for each item
     _data_reader = DataReader
+    _abort_on_fail = False
+    _auto_save_trace = 30
+    save_trace_to_file = False
     
     def __init__ (self,name,db, *args, **kwargs):
         self.name = name.lower()
@@ -277,15 +284,6 @@ class EntityType(object):
                                 'logicalinterface_id', 'devicetype','format',
                                 'updated_utc', self._timestamp]
         self._stage_type_map = self.default_stage_type_map()
-
-
-
-
-
-
-
-
-
         self._custom_exclude_col_from_auto_drop_nulls = []
         self._drop_all_null_rows = True
         #pipeline work variables stages
@@ -293,27 +291,33 @@ class EntityType(object):
         self._scd_stages = []
         self._custom_calendar = None
         self._is_initial_transform = True
-        self._trace = Trace(self)
         self._is_preload_complete = False
+        if self._data_items is None:
+            self._data_items = []
 
         #additional params set from kwargs
         self.set_params(**kwargs)
+        
+        #Start a trace to record activity on the entity type
+        self._trace = Trace(name=None,parent=self,db=db)
 
         # attach to time series table
         if self._db_schema is None:
-
-
             logger.warning(('No _db_schema specified in **kwargs. Using'
                              'default database schema.'))
         if self.logical_name is None:
             self.logical_name = self.name
         self._mandatory_columns = [self._timestamp,self._entity_id]
+        
+        (cols,functions) = self.separate_args(args)
+        
+        #create a database table if needed
         if name is not None and db is not None:            
             try:
                 self.table = self.db.get_table(self.name,self._db_schema)
             except KeyError:
                 if self.auto_create_table:
-                    ts = db_module.TimeSeriesTable(self.name ,self.db, *args, **kwargs)
+                    ts = db_module.TimeSeriesTable(self.name ,self.db, *cols, **kwargs)
                     self.table = ts.table
                     self.db.create()
                     msg = 'Create table %s' %self.name
@@ -325,11 +329,15 @@ class EntityType(object):
                            ' or use the auto_create_table = True keyword arg'
                            ' to create a table. ' %(name) )
                     raise ValueError (msg)
+            #populate the data items metadata from the supplied columns
+            self._data_items = self.build_item_metadata(self.table)
         else:
             logger.warning((
                     'Created a logical entity type. It is not connected to a real database table, so it cannot perform any database operations.'
-
                     ))
+            
+        #add functions
+        self.build_stage_metadata(*functions)
             
     def add_activity_table(self, name, activities, *args, **kwargs):
         '''
@@ -384,7 +392,32 @@ class EntityType(object):
     def _add_scd_pipeline_stage(self, scd_lookup):
         
         self._scd_stages.append(scd_lookup)
-
+        
+    def build_flat_stage_list(self):
+        '''
+        Build a flat list of all function objects defined for entity type
+        '''
+        
+        stages = []
+        
+        for s_list in list(self._stages.values()):
+            for stage in s_list:
+                #some functions are automatically added by the system
+                #do not include these
+                try:
+                    is_system = stage.is_system_function
+                except AttributeError:
+                    is_system = False
+                    logger.warning(('Function %s has no is_system_function property.'
+                              ' This means it was not inherited from '
+                              ' an iotfunctions base class. AS authors are'
+                              ' strongly encouraged to always inherit '
+                              ' from iotfunctions base classes' ),
+                             stage.__class__.__name__)
+            
+                if not is_system:
+                    stages.append(stage)
+        return stages
     
     def build_granularities(self,grain_meta,freq_lookup):
         '''
@@ -434,7 +467,31 @@ class EntityType(object):
             
         return out
     
-    def build_stages(self, function_meta, granularities_dict, item_meta):
+    def build_item_metadata(self,table):
+        '''
+        Build a client generated version of AS server metadata from a 
+        sql alachemy table object.
+        '''
+        
+        for col_name,col in list(table.c.items()):
+            item = {}
+            if col_name not in self.get_excluded_cols():
+                item['name'] = col_name
+                item['type'] = 'METRIC'
+                item['parentDataItem'] = None 
+                item['kpiFunctionDto'] = None
+                item['columnName'] = col.name
+                item['columnType'] = self.db.get_as_datatype(col)
+                item['sourceTableName'] = self.name
+                item['tags'] = []
+                item['transient'] = False
+                self._data_items.append(item)
+                
+        return self._data_items
+
+        
+    
+    def build_stages(self, function_meta, granularities_dict):
         '''
         Create a dictionary of stage objects. Dictionary is keyed by 
         stage type and a granularity obj. It contains a list of stage
@@ -467,56 +524,69 @@ class EntityType(object):
               disabled.append(s)              
               continue
             meta = {}
-            (package,module) = self.db.get_catalog_module(s['functionName'])
-            meta['__module__'] = '%s.%s' %(package,module)
-            meta['__class__'] =  s['functionName']
-            meta={}
-            meta = {**meta,**s['input']}
-            meta = {**meta,**s['output']}
-            mod = importlib.import_module('%s.%s' %(package,module))        
-            cls = getattr(mod,s['functionName'])
             try:
-                obj = cls(**meta)
-            except TypeError as e:
-                logger.warning(
-                    ('Unable build %s object. The arguments are mismatched'
-                     ' with the function metadata. You may need to'
-                     ' re-register the function. %s' %(s['functionName'],str(e))
-                     )
-                             )
-                invalid.append(s)
-            else:  
-                #add metadata to stage
-                try:
-                    obj.name
-                except AttributeError:
-                    obj.name = obj.__class__.__name__
-                obj._entity_type = self
-                schedule = s.get('schedule',None)
-                if schedule is not None:
-                    schedule = schedule.get('every',None)
-                obj._schedule = schedule
-                stage_type = self.get_stage_type(obj)
-                granularity_name = s.get('granularity',None)
-                if granularity_name is not None:
-                    granularity = granularities_dict.get(granularity_name,None)
+                (package,module) = self.db.get_catalog_module(s['functionName'])
+            except KeyError:
+                obj = s.get('object_instance',None)
+                if obj is None:
+                    msg = 'Function %s not found in the catalog metadata' %s['functionName']
+                    logger.warning(msg)
+                    invalid.append(s)
+                    continue
                 else:
-                    granularity = None
+                    logger.debug('Using local function instance %s',
+                                 s.get('name','unknown'))
+            else:
+                meta['__module__'] = '%s.%s' %(package,module)
+                meta['__class__'] =  s['functionName']
+                mod = importlib.import_module('%s.%s' %(package,module))
+                meta = {**meta,**s['input']}
+                meta = {**meta,**s['output']}
+                
+                cls = getattr(mod,s['functionName'])
                 try:
-                    stage_metadata[(stage_type,granularity)].append(obj)
-                except KeyError:
-                    stage_metadata[(stage_type,granularity)]=[obj]
-                #add input and output items
-                if stage_type != 'preload':
-                    obj._input_set = self.get_stage_input_item_set(
-                                    stage=obj,
-                                    arg_meta = s.get('input',{}))
-                else:
-                    #as a legacy quirk, a preload stage may have 
-                    # dummy input items that should always be ignored
-                    obj._input_set = set()
-                obj._output_list = self.get_stage_output_item_list(
-                                    arg_meta = s.get('output',[]))
+                    obj = cls(**meta)
+                except TypeError as e:
+                    logger.warning(
+                        ('Unable build %s object. The arguments are mismatched'
+                         ' with the function metadata. You may need to'
+                         ' re-register the function. %s' %(s['functionName'],str(e))
+                         )
+                                 )
+                    invalid.append(s)
+                    continue
+
+            #add metadata to stage
+            try:
+                obj.name
+            except AttributeError:
+                obj.name = obj.__class__.__name__
+            obj._entity_type = self
+            schedule = s.get('schedule',None)
+            if schedule is not None:
+                schedule = schedule.get('every',None)
+            obj._schedule = schedule
+            stage_type = self.get_stage_type(obj)
+            granularity_name = s.get('granularity',None)
+            if granularity_name is not None:
+                granularity = granularities_dict.get(granularity_name,None)
+            else:
+                granularity = None
+            try:
+                stage_metadata[(stage_type,granularity)].append(obj)
+            except KeyError:
+                stage_metadata[(stage_type,granularity)]=[obj]
+            #add input and output items
+            if stage_type != 'preload':
+                obj._input_set = self.get_stage_input_item_set(
+                                stage=obj,
+                                arg_meta = s.get('input',{}))
+            else:
+                #as a legacy quirk, a preload stage may have 
+                # dummy input items that should always be ignored
+                obj._input_set = set()
+            obj._output_list = self.get_stage_output_item_list(
+                                arg_meta = s.get('output',[]))
             
         logger.debug('skipping disabled stages: %s . Ignoring outputs: %s' , 
                      [s['functionName'] for s in disabled],
@@ -527,6 +597,34 @@ class EntityType(object):
                      [s['output'] for s in disabled])
         
         return stage_metadata
+    
+    def build_stage_metadata(self,*args):
+        '''
+        Make a new JobController payload from a list of local function objects
+        '''
+        metadata = []
+        for f in args:
+            fn = {}
+            try:
+                name = f.name
+            except AttributeError:
+                name = f.__class__.__name__
+            fn['name'] = name
+            fn['object_instance'] = f
+            fn['description'] = f.__doc__
+            fn['functionName'] = f.__class__.__name__
+            fn['enabled'] = True
+            fn['execStatus'] = False
+            fn['schedule'] = None
+            fn['backtrack'] = None
+            fn['granularity'] = None
+            (fn['input'],fn['output'],fn['outputMeta']) = f.build_arg_metadata()
+            fn['inputMeta'] : None
+            metadata.append(fn)
+            
+        self._stages = self.build_stages(function_meta = metadata,
+                                         granularities_dict = {})
+        return metadata
     
     def index_df(self,df):
         '''
@@ -568,21 +666,11 @@ class EntityType(object):
         
     @classmethod
     def default_stage_type_map(cls):
-        
-
         '''
-
-
         Configure how properties of stages are used to set the stage type
         that is used by the job controller to decide how to process a stage
         '''
-        
-
-
-
-
-
-
+    
         return [ ('preload', 'is_preload'), 
                  ('get_data', 'is_data_source'),
                  ('transform', 'is_transformer'),
@@ -640,15 +728,29 @@ class EntityType(object):
         return df
     
     
+    def get_attributes_dict(self):
+        '''
+        Produce a dictionary containing all attributes
+        '''
+        c = {}
+        for att in dir(self):
+            value = getattr(self,att)
+            if not callable(value):
+                c[att] = value
+        return c
+    
     def get_calc_pipeline(self,stages=None):
         '''
         Make a new CalcPipeline object. Reset processing variables.
         '''
+        warnings.warn('get_calc_pipeline() is deprecated. Use build_job()',
+                      DeprecationWarning)
         self._scd_stages = []
         self._custom_calendar = None
         self._is_initial_transform = True
         return CalcPipeline(stages=stages, entity_type = self)
-    
+
+
     def get_custom_calendar(self):
         
         return self._custom_calendar
@@ -659,14 +761,11 @@ class EntityType(object):
         Retrieve entity data at input grain or preaggregated
         '''
         
+        tw = {} #info to add to trace
         if entities is None:
-            e_count = 'all'
-            e_preview = ''
+            tw['entity_filter'] = 'all'
         else:
-            e_count = len(entities)
-            e_preview = '[%s..]' %entities[0]
-        msg = 'Getting entity type data for %s entities %s' %(e_count,e_preview)
-        self.trace_append(self,msg)
+            tw['entity_filter'] = '% entities' %len(entities)
         
         if self._pre_aggregate_time_grain is None:    
             df = self.db.read_table(
@@ -680,7 +779,7 @@ class EntityType(object):
                     entities = entities,
                     dimension = self._dimension_table_name
                     ) 
-            self.trace_append(self,'Read source data',df=df)
+            tw['pre-aggregeted'] = None
             
         else:
             (metrics,dates,categoricals,others) = self.db.get_column_lists_by_type(self.name,self._db_schema)
@@ -726,18 +825,21 @@ class EntityType(object):
                     dimension = self._dimension_table_name                    
                     )
 
-            msg = 'Read input data aggregated to %s. '  %(self._pre_aggregate_time_grain)
-            self.trace_append(self,msg=msg,df=df)
-            
-        if start_ts is not None:
-            msg = 'Data retrieved after timestamp: %s. ' %start_ts
+            tw['pre-aggregeted'] = self._pre_aggregate_time_grain
+        
+        tw['rows_retrieved'] = len(df.index)
+        tw['start_ts'] = start_ts
+        tw['end_ts'] = end_ts
+        self.trace_append(created_by = self,
+                          msg='Retrieved entity timeseries data for %s' %self.name,
+                          **tw)
 
         # Optimizing the data frame size using downcasting
         memo = MemoryOptimizer()
 
         #df = memo.downcastNumeric(df)
         df = self.index_df(df)
-
+        
         return df
             
 
@@ -748,6 +850,16 @@ class EntityType(object):
         :return: list of dicts containting data item metadata
         '''
         return self._data_items
+    
+    def get_excluded_cols(self):
+        '''
+        Return a list of physical columns that should be excluded when returning
+        the list of data items
+        '''
+        
+        return [ 'logicalinterface_id',
+                 'format',
+                 'updated_utc'    ]
     
     
     def get_grain_freq(self,grain_name,lookup,default):
@@ -818,6 +930,7 @@ class EntityType(object):
                           ' to request items programatically'),
                             stage.name, candidate_items)            
             candidate_items = set()
+            
         for arg,value in list(arg_meta.items()):
             
             if isinstance(value,str):
@@ -1083,7 +1196,7 @@ class EntityType(object):
         Base items are non calculated data items.
         '''
         
-        item_type = self._data_items[item_name]
+        item_type = self._data_items[item_name]['columnType']
         if item_type == 'METRIC':
             return True
         else:
@@ -1094,7 +1207,7 @@ class EntityType(object):
         Determine whether an item is a data item
         '''
         
-        if name in self._data_items:
+        if name in [x.name for x in self._data_items]:
             return True
         else:
             return False
@@ -1130,8 +1243,7 @@ class EntityType(object):
         #build a dictionary of stages
         stages = self.build_stages(
                     function_meta = meta.get('kpiDeclarations',[]),
-                    granularities_dict =grains_metadata,
-                    item_meta = meta.get('dataItems',[])
+                    granularities_dict =grains_metadata
                     )
         
         params = {
@@ -1175,6 +1287,44 @@ class EntityType(object):
             dim.create()
             msg = 'Creates dimension table %s' %self._dimension_table_name
             logger.debug(msg)
+            
+    def publish_kpis(self):
+        '''
+        Publish the stages assigned to this entity type to the AS Server
+        '''   
+        export = []
+        stages = self.build_flat_stage_list()
+            
+        self.db.register_functions(stages)
+                
+        for s in stages:
+            try:
+                name = s.name
+            except AttributeError:
+                name = s.__class__.__name__
+                logger.debug(('Function class %s has no name property.'
+                              ' Using the class name'),
+                             name)                                
+             
+            try:
+                args = s._get_arg_metadata()
+            except AttributeError:
+                msg = ('Attempting to publish kpis for an entity type.'
+                       ' Function %s has no _get_arg_spec() method.'
+                       ' It cannot be published' ) %name
+                raise NotImplementedError(msg)
+                
+            metadata  = { 
+                    'name' : name ,
+                    'args' : args
+                    }
+            export.append(metadata)
+                
+        response = self.db.http_request(object_type = 'kpiFunctions',
+                                        object_name = self.logical_name,
+                                        request = 'POST',
+                                        payload = export)    
+        return response
 
     def raise_error(self,exception,msg='',abort_on_fail=False,stageName=None):
         '''
@@ -1195,7 +1345,7 @@ class EntityType(object):
             msg = 'An exception occurred during execution of the pipeline stage %s. The stage is configured to continue after an execution failure' % (stageName)
             logger.warning(msg)
 
-    def register(self):
+    def register(self,publish_kpis=False):
         '''
         Register entity type so that it appears in the UI. Create a table for input data.
         
@@ -1211,16 +1361,17 @@ class EntityType(object):
         table['name'] = self.logical_name
         table['metricTableName'] = self.name
         table['metricTimestampColumn'] = self._timestamp
-        if self._dimension_table is not None:
-            table['dimensionTableName'] = self._dimension_table_name
-            for c in self.db.get_column_names(self._dimension_table, schema = self._db_schema):
-                cols.append((self._dimension_table,c,'DIMENSION'))
         for c in self.db.get_column_names(self.table, schema = self._db_schema):
             cols.append((self.table,c,'METRIC'))
+        if self._dimension_table is not None:            
+            table['dimensionTableName'] = self._dimension_table_name
+            for c in self.db.get_column_names(self._dimension_table, schema = self._db_schema):
+                if c not in cols:
+                    cols.append((self._dimension_table,c,'DIMENSION'))
         for (table_obj,column_name,col_type) in cols:
             msg = 'found %s column %s' %(col_type,column_name)
             logger.debug(msg)
-            if column_name not in ['logicalinterface_id','format','updated_utc']:
+            if column_name not in self.get_excluded_cols():
                 data_type = table_obj.c[column_name].type
                 if isinstance(data_type,DOUBLE) or isinstance(data_type,Float) or isinstance(data_type,Integer):
                     data_type = 'NUMBER'
@@ -1251,13 +1402,14 @@ class EntityType(object):
         response = self.db.http_request(request='POST',
                                      object_type = 'entityType',
                                      object_name = self.name,
-                                     payload = payload)
+                                     payload = payload,
+                                     raise_error = True)
 
         msg = 'Metadata registered for table %s '%self.name
         logger.debug(msg)
-        #response = self.cos_save()
-        #msg = 'Entity type saved to cos %s '%response
-        #logger.debug(msg)
+        if publish_kpis:
+            self.publish_kpis()
+        
         return response
     
         
@@ -1270,6 +1422,20 @@ class EntityType(object):
                           text = msg,
                           **kwargs)
         
+    def separate_args(self,args):
+        '''
+        Separate arguments into columns and functions
+        '''
+        
+        cols = []
+        functions = []
+        for a in args:
+            if isinstance(a,Column):
+                cols.append(a)
+            else:
+                functions.append(a)
+            
+        return (cols,functions)
             
     def set_custom_calendar(self,custom_calendar):
         '''
@@ -1408,34 +1574,154 @@ class Trace(object)    :
     '''
     Gather status and diagnostic information to report back in the UI
     '''
-    elapsed_threshold_sec = 2 #threshold for wring elapsed time to the trace
+    
+    save_trace_to_file = False
+    
     primary_df = 'df'
-    def __init__(self,parent=None):
+    def __init__(self,name=None,parent=None,db=None):
         if parent is None:
             parent = self
-        self.parent = parent
+        self.parent = parent            
+        self.db = db
+        self.auto_save = None
+        self.auto_save_thread = None
+        self.stop_event = None
+        if name is None:
+            name = self.build_trace_name()
+        self.name = name
         self.data = []
         self.df_cols = set()
         self.df_index = set()
         self.df_count = 0
         self.prev_ts = dt.datetime.utcnow()
+        logger.debug('Starting trace')
+        logger.debug('Trace name: %s',self.name )
+        logger.debug('auto_save %s',self.auto_save)
         self.write(created_by=parent,text='Trace started. ')
+        
+        
+    def as_json(self):        
+        return json.dumps(self.data,indent=4)        
+        
+    def build_trace_name(self):
+        
+        execute_str = f'{dt.datetime.utcnow():%Y%m%d%H%M%S%f}' 
+        
+        return 'auto_trace_%s_%s' %(self.parent.__class__.__name__,
+                               execute_str)
+        
+    def reset(self,name=None,auto_save=None):
+        '''
+        Clear trace information and rename trace
+        '''
+        self.df_cols = set()
+        self.df_index = set()
+        self.df_count = 0        
+        self.prev_ts = dt.datetime.utcnow()
+        self.auto_save = auto_save
+        if self.auto_save_thread is not None:
+            logger.debug('Reseting trace %s', self.name)
+            self.stop()
+        self.data = []
+        if name is None:
+            name = self._trace.build_trace_name()
+        self.name = name
+        logger.debug('Started a new trace %s ', self.name)
+        if self.auto_save is not None:
+            logger.debug('Initiating auto save for trace')
+            self.stop_event = threading.Event()
+            self.auto_save_thread = threading.Thread(
+                    target=self.run_auto_save,
+                    args=[self.stop_event])
+            self.auto_save_thread.start()
+            
+    def run_auto_save(self,stop_event):
+        '''
+        Run auto save. Auto save is intended to be run in a separate thread.
+        '''
+        last_trace = None
+        next_autosave = dt.datetime.utcnow()
+        while not stop_event.is_set():
+            if next_autosave >= dt.datetime.utcnow():
+                if self.data != last_trace:
+                    logger.debug('Auto save trace %s' %self.name)
+                    self.save()
+                    last_trace = self.data
+                next_autosave = dt.datetime.utcnow() + dt.timedelta(seconds = self.auto_save)                
+            time.sleep(0.1)
+        logger.debug('%s autosave thread has stopped',self.name)
+        
+    def save(self):
+        '''
+        Write trace to COS
+        '''
+        
+        if len(self.data) == 0:
+            trace = None
+            logger.debug('Trace is empty. Nothing to save.')
+        else:
+            if self.db is None:
+                logger.warning('Cannot save trace. No db object supplied')
+                trace = None
+            else:
+                trace = str(self.as_json())
+                self.db.cos_save(persisted_object=trace,
+                         filename=self.name,
+                         binary=False)
+                logger.debug('Saved trace to cos %s', self.name)
+        try:
+            save_to_file = self.parent.save_trace_to_file
+        except AttributeError:
+            save_to_file = self.save_trace_to_file
+        if trace is not None and save_to_file:
+            with open('%s.json' %self.name, 'w') as fp:
+                fp.write(trace)
+            logger.debug('wrote trace to file %s.json' %self.name)
+        
+        return trace
+
+    def stop(self):
+        '''
+        Stop autosave thead
+        '''
+        self.auto_save = None
+        if not self.stop_event is None:
+            self.stop_event.set()
+        if self.auto_save_thread is not None:
+            self.auto_save_thread.join()
+            self.auto_save_thread = None
+            logger.debug('Stopping autosave on trace %s',self.name)
+            
+    def update_last_entry(self,last,**kw):
+        '''
+        Update the last trace entry. Include the contents of **kw.
+        '''
+        kw['updated'] = dt.datetime.utcnow()
+        
+        try:
+            last = self.data.pop()
+        except IndexError:
+            last = {}
+            logger.debug(('Tried to update the last entry of an empty trace.'
+                          ' Nothing to update. New entry will be inserted.'))
+        last = {**last,**kw}
+        self.data.append(last)
+        
+        return last
+          
         
     def write(self,created_by,text,log_method=None,**kwargs):
         ts = dt.datetime.utcnow()
         text = str(text)
-        try:
-            (kwargs[self.primary_df],msg) = self._df_as_dict(kwargs[self.primary_df],prefix=self.primary_df)
-        except KeyError:
-            msg = ''   
-        text = text + msg
         elapsed = (ts - self.prev_ts).total_seconds()
         self.prev_ts = ts
-        if elapsed >= self.elapsed_threshold_sec:
-            msg = 'Time since last trace entry: %s sec. ' %elapsed
-            text = text + msg
+        kwargs['elapsed_time'] = elapsed
+        try:
+            created_by_name = created_by.name
+        except AttributeError:
+            created_by_name = str(created_by)
         entry = { 'timestamp' : str(ts),
-          'created_by' : str(created_by),
+          'created_by' : created_by_name,
           'text': text,
           'elapsed_time' : elapsed
         }
@@ -1443,6 +1729,15 @@ class Trace(object)    :
             if not isinstance(value,str):
                 kwargs[key] = str(value)
         entry = {**entry,**kwargs}
+        
+        # The trace can track changes in a dataframe between writes
+        # The dataframe my ne passed using the df argument
+        df = kwargs.get(self.primary_df,None)
+        
+        if df is not None:
+            (df_info,msg) = self._df_as_dict(df=df,prefix=self.primary_df)
+            entry = {**entry,**df_info}
+        
         self.data.append(entry)
          
         try:
@@ -1453,40 +1748,41 @@ class Trace(object)    :
             logger.warning(msg)
             
     def _df_as_dict(self,df,prefix):
-        msg = ''
-        data = {}
-        prev_count = self.df_count
-        prev_index = self.df_index
-        prev_cols = self.df_cols
-        self.df_count = len(df.index)
-        if df.index.names is None:
-            self.df_index = {}
+        
+        if df is None:
+            logger.warning('Trace info ignoring null dateframe')
+            df = pd.DataFrame()
+        elif not isinstance(df,pd.DataFrame):
+            logger.warning('Trace info ignoring non dataframe %s of type %s', df, type(df))
+            df = pd.DataFrame()
+        
+        if len(df.index)>0:
+            msg = ''
+            data = {}
+            prev_count = self.df_count
+            prev_cols = self.df_cols  
+            self.df_count = len(df.index)
+            if df.index.names is None:
+                self.df_index = {}
+            else:
+                self.df_index = set(df.index.names)
+            self.df_cols = set(df.columns)
+            # stats
+            data['%s_count' %prefix] = self.df_count
+            data['%s_index' %prefix] = self.df_index
+            data['%s_columns' %prefix] = self.df_cols        
+            #look at changes
+            if self.df_count != prev_count:
+                data['%s_rowcount_change' %prefix] = self.df_count - prev_count
+            if len(self.df_cols-prev_cols)>0:
+                data['%s_added_columns' %prefix] = self.df_cols-prev_cols
+            if len(prev_cols-self.df_cols)>0:
+                data['%s_added_columns' %prefix] = prev_cols-self.df_cols
         else:
-            self.df_index = set(df.index.names)
-        self.df_cols = set(df.columns)
-        #formulate message based on changes
-        if self.df_count > prev_count:
-            msg = '%s Added %s rows. ' %(msg,self.df_count - prev_count)
-        if self.df_count < prev_count:
-            msg = '%s Removed %s rows. ' %(msg,self.df_count - prev_count)            
-        if len(self.df_index-prev_index)>0:
-            msg = '%s Added to index %s. ' %(msg,self.df_index-prev_index)
-        if len(prev_index-self.df_index)>0:
-            msg = '%s Removed from index %s ' %(msg,prev_index-self.df_index)
-        if len(self.df_cols-prev_cols)>0:
-            msg = '%s Added columns %s. ' %(msg,self.df_cols-prev_cols)
-        if len(prev_cols-self.df_cols)>0:
-            msg = '%s Removed columns %s.  ' %(msg,prev_cols-self.df_cols)            
-        #also include a dict with actual stats
-        data['%s_count' %prefix] = self.df_count
-        data['%s_index' %prefix] = self.df_index
-        data['%s_columns' %prefix] = self.df_cols
-    
+            data = {'df': None}
+            msg = ''
+            
         return(data,msg)
-        
-    def as_json(self):
-        
-        return json.dumps(self.data)
     
     def __str__(self):
         
@@ -1495,6 +1791,8 @@ class Trace(object)    :
             out = out + entry['text'] 
             
         return out
+    
+
                 
     
 

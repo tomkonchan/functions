@@ -8,17 +8,27 @@
 #
 # *****************************************************************************
 
+'''
+Warning: The pipeline module is not a public API. These low level classes
+should not be used directly. They are used from inside the method of 
+public classes.
+
+'''
+
 import logging
+import json
 import re
 import datetime as dt
 import numpy as np
-import ibm_db
 import time
+import sys
+from collections import OrderedDict
 
+import ibm_db
 from . import dbhelper
 from .enginelog import EngineLogging
-from collections import OrderedDict
-from .util import log_df_info
+from .util import log_df_info, freq_to_timedelta, StageException
+
 import pandas as pd
 import warnings
 from pandas.api.types import (is_bool_dtype, is_numeric_dtype, is_string_dtype,
@@ -64,6 +74,7 @@ class DataAggregator(object):
     
     '''
     
+    is_system_function = True
     _allow_empty_df = False
     _discard_prior_on_merge = True
 
@@ -130,6 +141,7 @@ class DataMerge(object):
     
     '''
     
+    is_system_function = True
     r_suffix = '_new_'
     
     def __init__ (self,name=None,df=None, **kwargs):
@@ -258,11 +270,14 @@ class DataMerge(object):
         
         if self.df is None:
             self.df = pd.DataFrame()
-        logger.debug(('Input dataframe has columns %s and index %s'), 
+        if len(self.df.index)>0:
+            logger.debug(('Input dataframe has columns %s and index %s'), 
                      list(self.df.columns),
                      self.get_index_names())
-        logger.debug(('The job also has constant output items %s'), 
-                     [x for x in list(self.constants.keys())])        
+        job_constants = list(self.constants.keys())
+        if len(job_constants) > 0:
+            logger.debug(('The job also has constant output items %s'), 
+                     [x for x in job_constants])        
         if isinstance(obj, (dict,OrderedDict)):
             raise TypeError(('Function error.'
                              ' A failure occured when attempting to merge a'
@@ -318,8 +333,8 @@ class DataMerge(object):
             else:
                 if len(col_names) == len(df.columns):
                     df.columns = col_names
-
-        logger.debug((
+        if len(df.index)>0:
+            logger.debug((
                 'Merging dataframe with columns %s and index %s'), 
                 list(self.df.columns),
                 self.get_index_names())
@@ -328,10 +343,10 @@ class DataMerge(object):
         # and determine merge strategy
         obj_index_names = self.get_index_names(df)
         merge_strategy = None
-        if df.empty:
+        if len(df.index)==0:
             merge_strategy = 'skip'
-            logger.debug('Skipping empty dataframe')
-        elif self.df.empty:
+            logger.debug('Skipping empty dataframe received as merge input')
+        elif len(self.df.index)==0:
             merge_strategy = 'replace'
         elif df.index.equals(self.df.index):
             if set(col_names).issubset(set(self.df.columns)) and (
@@ -437,7 +452,7 @@ class DataMerge(object):
         if len(col_names)==1:
             # if the source dataframe is empty, it has no index
             # the data merge object can only accept a constant
-            if self.df.empty:
+            if len(df.index)==0:
                 self.add_constant(col_names[0],obj)
             else:
                 try:
@@ -461,11 +476,12 @@ class DataMerge(object):
                     ))    
             
     
-class DataWriter(object):
+class DataWriterFile(object):
     '''
     Default data write stage. Writes to the file system.
     '''
     
+    is_system_function = True
     produces_output_items = False
     
     def __init__(self,name,**params):
@@ -492,7 +508,7 @@ class DataReader(object):
     '''
     Default data reader stage. Calls get_data method on the object.
     '''
-    
+    is_system_function = True
     is_data_source = True
     #will be added by job controller
     _projection_list = None
@@ -538,13 +554,13 @@ class DataReader(object):
                  ))               
             
         logger.debug(('Data items %s will will be automatically'
-                      ' retreievd by the get_data method of the payload'),
+                      ' retrieved by the get_data method of the payload'),
                       outputs)
             
         return outputs
     
 class DataWriterException(Exception):
-
+    
     def __init__(self, msg):
         super().__init__(msg)
 
@@ -552,6 +568,7 @@ class Db2DataWriter():
     '''
     Stage that writes the calculated data items to database.
     '''
+    is_system_function = True
     MAX_NUMBER_OF_ROWS_FOR_SQL = 5000
     produces_output_items = False
 
@@ -891,6 +908,7 @@ class JobController(object):
     default_is_schedule_progressive = True
     keep_alive_duration = None #'2min'
     recursion_limit = 99
+    save_trace_to_file = False
     # Most of the work performed when executing a job is done by
     # executing the execute method of one or more stages defined in
     # the payload. There are however certain default classes that
@@ -912,12 +930,13 @@ class JobController(object):
         # kwargs can be used to override default job controller and payload
         # parameters. All kwargs will be copied onto both objects.
         self.set_params(**kwargs)
+        kwargs['save_trace_to_file'] = self.save_trace_to_file
         self.set_payload_params(**kwargs)
         
         #create a job log
         self.job_log = JobLog(self)
-        
         self.stage_metadata = self.get_payload_param('_stages',None)
+        
         if self.stage_metadata is None:
             raise ValueError((
                     'The playload for this job does not have valid metadata.'
@@ -955,7 +974,7 @@ class JobController(object):
         
         return out
     
-    def adjust_to_schedule(self,execute_date,start_hours,start_min,interval):
+    def adjust_to_start_date(self,execute_date,start_hours,start_min,interval):
         '''
         Adjust an execution date to conform to a schedule.
         Schedule has a start hour and start minute and interval
@@ -978,7 +997,7 @@ class JobController(object):
             if scheduled > execute_date:
                 scheduled = scheduled - dt.timedelta(days=1)
                 
-            interval = pd.to_timedelta(interval)
+            interval = freq_to_timedelta(interval)
             periods = (execute_date - scheduled)//interval
             adjusted = scheduled + periods * interval
 
@@ -1122,6 +1141,10 @@ class JobController(object):
         (freq,start_hour,start_min,backtrack_days)
         '''        
         #combine default with other schedules
+        
+        if schedules_dict is None:
+            schedules_dict = {}
+        
         if self.default_schedule[0] not in schedules_dict:
             schedules_dict[self.default_schedule[0]] = (
                     self.default_schedule[1], self.default_schedule[2],
@@ -1132,7 +1155,7 @@ class JobController(object):
         #sort freq_list
         sort_dict = {}
         for f in freq_list:
-            sort_dict[pd.to_timedelta(f)] = f
+            sort_dict[freq_to_timedelta(f)] = f
         durations = list(sort_dict.keys())
         durations.sort()                
         #asseble output list
@@ -1203,6 +1226,14 @@ class JobController(object):
         
         return meta
     
+    def build_trace_name(self,execute_date):
+        
+        if execute_date is None:
+            execute_date = dt.datetime.utcnow()
+        execute_str = f'{execute_date:%Y%m%d%H%M%S%f}' 
+    
+        return '%s_%s_trace_%s' %(self.payload.__class__.__name__,
+                               self.name,execute_str)
     
     def collapse_aggregation_stages(self,granularity, available_columns):
         '''
@@ -1282,16 +1313,17 @@ class JobController(object):
         logger.debug(str(self))
         execute_date = dt.datetime.utcnow()
         if self.keep_alive_duration is not None:
-            execute_until = execute_date + pd.to_timedelta(self.keep_alive_duration)
+            execute_until = execute_date + freq_to_timedelta(self.keep_alive_duration)
             logger.debug((
                     'Job will continue executing until %s as it has a keep'
-                    'alive duration of %s',execute_until,self.keep_alive_duration
-                    ))
+                    'alive duration of %s'),
+                    execute_until,self.keep_alive_duration
+                    )
         else:
             execute_until = execute_date
-                        
+
         EngineLogging.finish_setup_log()
-        
+
         #process continuously while job until time is up
         #after time is up, job will be end. An external scheduler can create
         # a new one to replace it.
@@ -1300,7 +1332,9 @@ class JobController(object):
         execution_counter = 0
         constants = {}
         while execute_date <= execute_until:
+
             EngineLogging.start_run_log(self.payload.tenant_id, self.payload.name)
+            
             logger.debug ((
                     'Starting execution number: %s with execution date: %s'),
                     execution_counter, execute_date
@@ -1309,38 +1343,50 @@ class JobController(object):
             # the job controller was initialized. 
             # The resulting dictionary contains a dictionary of status items
             # about each schedule
-            schedule_metadata = self.evaluate_schedules(execute_date)
-            future_executions = []
-            is_executed = False
+            try:
+                schedule_metadata = self.evaluate_schedules(execute_date)
+            except BaseException as e:
+                msg = 'Error evaluating schedules. Aborting job: %s' %e
+                self.trace_append(msg,self,logger.warning)
+                meta = {'execution_date':execute_date,
+                        'previous_execution_date': None,
+                        'next_future_execution': None}
+                self.log_failed_start(meta,exception=e,status ='aborted')
+                self.raise_error(exception=e,msg='',stageName='evaluate_schedules')
+                
             # look for schedules that were flagged 'is_due'.
             # These will be executed.
             for (schedule,meta) in list(schedule_metadata.items()):
                 if not meta['is_due']:
-                    self.log_schedule_non_exec(schedule=schedule,
+                    try:
+                        self.log_schedule_non_exec(schedule=schedule,
                                                schedule_metadata = meta)
-                    # keep track of any executions that are scheduled 
-                    # to complete before this job ends
-                    if not meta['is_subsumed'] and meta['next_date'] <= execute_until:
-                        future_executions.append(meta['next_date'])
-                        logger.debug((
-                                'This schedule is pending execution in a '
-                                ' subsequent iteration of this job'
-                                ))
+                    except BaseException as e:
+                        logger.warning('Error logging non-execution data: %s',e)
                 else:
-                    self.log_schedule_tagged_for_exec(schedule=schedule,
-                                                      schedule_metadata=meta,
-                                                      execute_date = execute_date)
-                    #preload stages are not backtracked.
-                    # Start date is always last checkpoint
-                    (preload_stages,cols) = self.get_stages(
+                    self.log_start(meta,
+                                   status='running',
+                                   startup_log =None)
+                    try:
+                        (preload_stages,cols) = self.get_stages(
                                             stage_type = 'preload',
                                             granularity = None,
                                             available_columns = set(),
                                             exclude_stages = [])
+                    except BaseException as e:
+                        msg = 'Aborted execution. Error getting preload stages: %s' %e
+                        self.trace_append(msg,self,logger.debug)
+                        if self.get_payload_param('_abort_on_fail',False):
+                            self.log_completion(self,meta,status='aborted')
+                            continue
+                        else:
+                            preload_stages = []
+                            cols = []
+                        
                     # the output of a preload stage is a boolean column
                     # until we retrieve data, it has nowhere to go, 
                     # for now we will declare it as a constant
-                    
+                    can_proceed = True
                     if len(preload_stages) != 0:
                         logger.debug('Executing preload stages:')
                         (df,can_proceed) = self.execute_stages(preload_stages,
@@ -1355,144 +1401,236 @@ class JobController(object):
                         logger.debug('Preload stages complete')
                         
                     # build a job specification
-                    job_spec = self.build_job_spec(
+                    try:
+                        job_spec = self.build_job_spec(
                                 schedule=schedule,
-                                subsumed=meta['mark_complete'])                                        
+                                subsumed=meta['mark_complete'])
+                    except BaseException as e:
+                        msg = 'Aborted execution. Error building job spec: %s' %e
+                        self.trace_append(msg,self,logger.debug)
+                        self.log_completion(self,meta,status='aborted')
+                        continue                       
                     
                     # divide up the date range to be processed into chunks
-                    for (chunk_start,chunk_end) in (
-                            self.get_chunks(
+                    try:
+                        chunks = self.get_chunks(
                                     start_date=meta['start_date'],
                                     end_date=execute_date,
                                     round_hour = meta['round_hour'],
                                     round_min = meta['round_min'],
                                     schedule = schedule)
-                            ):
+                    except BaseException as e:
+                        msg = 'Aborted execution. Error identifying chunks: %s' %e
+                        self.trace_append(msg,self,logger.debug)
+                        self.log_completion(self,meta,status='aborted')
+                        continue                         
+                    
+                    for i,(chunk_start,chunk_end) in enumerate(chunks):
                                 
                         # execute the job spec for each chunk.
                         # add the constants that were produced by
                         # the preload stages
-                        (df,can_proceed) = self.execute_stages(
-                                stages = job_spec['input_level'],
-                                start_ts=chunk_start,
-                                end_ts=chunk_end,
-                                df=None,
-                                constants = constants)                        
-                        if not can_proceed:
-                            continue
-                        else:
-                            for (grain,stages) in list(job_spec.items()):
-                                if grain != 'input_level':
-                                    
-                                    (result,can_proceed) = self.execute_stages(
-                                            stages = stages,
-                                            start_ts=chunk_start,
-                                            end_ts=chunk_end,
-                                            df=df)
 
-                                
-                    for m in meta['mark_complete']:
-                        self.log_completion(schedule = m,
-                                            timestamp=execute_date,
-                                            backtrack=meta['backtrack'],
-                                            trace=None)
+                        kwargs = {'chunk' : i,
+                                  'start_date':chunk_start,
+                                  'end_date': chunk_end}                                  
+
+                        if len(chunks) > 1 :
+                            self.trace_append('Processing in chunks',
+                                          created_by = None,
+                                          log_method = logger.debug,
+                                          **kwargs)
+                        else: 
+                            self.trace_append('Processing as a single chunk',
+                                          created_by = None,
+                                          log_method = logger.debug,
+                                          **kwargs)
+                        
+                        if can_proceed:
+                            (df,can_proceed) = self.execute_stages(
+                                    stages = job_spec['input_level'],
+                                    start_ts=chunk_start,
+                                    end_ts=chunk_end,
+                                    df=None,
+                                    constants = constants)                        
+                            if not can_proceed:
+                                msg = 'Aborted execution. Error executing stages'
+                                self.trace_append(msg,self,logger.debug)
+                                self.log_completion(self,meta,status='aborted')                            
+                                continue
+                            else:
+                                for (grain,stages) in list(job_spec.items()):
+                                    if can_proceed:
+                                        if grain != 'input_level':                             
+                                            (result,can_proceed) = self.execute_stages(
+                                                    stages = stages,
+                                                    start_ts=chunk_start,
+                                                    end_ts=chunk_end,
+                                                    df=df)
+                                            if not can_proceed:
+                                                msg = 'Aborted execution. Error executing stages'
+                                                self.trace_append(msg,self,logger.debug)
+                                                self.log_completion(self,meta,status='aborted')                            
+                                                continue                                    
                     
-                    is_executed = True
+                    next_execution = self.get_next_future_execution(schedule_metadata)                    
+                    meta['next_future_execution'] = next_execution
+                    self.log_completion(metadata = meta,
+                                        status = 'complete')
+                    
             
             #if nothing was processed this round wait until the next 
             # scheduled execution
             # if there is no future execution that fits withing the timeframe
             # of this job, no need to hang around and wait
             
-            if not is_executed:
-                if len(future_executions) > 0:
-                    wait_for = min(future_executions)-dt.datetime.utcnow()
-                    wait_for = wait_for.total_seconds()
-                    if wait_for > 0:
-                        logger.debug('Waiting %s seconds until next execution',
-                                      wait_for)
-                        time.sleep(wait_for)
-                else:
-                    logger.debug((
-                            'Aborting job as there is nothing left to process'
-                            ' before execution end time'
+            if next_execution is not None and next_execution < execute_until:
+                self.sleep_until(next_execution)
+            else:
+                logger.debug((
+                        'Ending job normally as there are no scheduled executions '
+                        ' due before execution end time'
                             ))
-                    break
+                self.trace_end()
+                break
+                
             
             execution_counter += 1
             execute_date = dt.datetime.utcnow()
-            
-            EngineLogging.finish_run_log()
+        
             
     def execute_stages(self,stages,df,start_ts,end_ts,constants=None):
         '''
         Execute a series of stages contained in a job spec. 
         Combine the execution results with the incoming dataframe.
         Return a new dataframe.
+        
+        When the execution of a stage fails or results in an empty
+        dataframe, payload properties determine whether
+        execution of remaining stages should go ahead or not. If 
+        execution proceeds on failure of a stage, the columns that
+        were supposed to be contributed by the stage will be set to null.
+        
         '''
         
         #create a new data_merge object using the dataframe provided
         merge = self.data_merge(df=df,constants=constants)
         can_proceed = True
-
         
         for s in stages:
             
+            #get metadata
+            new_cols = self.exec_stage_method(s,'get_output_list',None)            
+            produces_output_items  = self.get_stage_param(
+                                            s,'produces_output_items',True)
+            discard_prior_data = self.get_stage_param(
+                                            s,'_discard_prior_on_merge',False)
+            
+            #build initial trace info
+            tsg = 'Executed stage %s' %s.name
+            tw = {'produces_data_items' : produces_output_items,
+                  'output_items': new_cols,
+                  'discard_prior_data' : discard_prior_data }
+            
             #halt execution if no data 
             if not self.get_stage_param(s,'_allow_empty_df',True) and (
-                               merge.df is None or merge.df.empty):
+                    merge.df is None or len(df.index)==0):
                 can_proceed = False
-                logger.info((
-                        'Terminating execution of this run as the stage %s'
-                        ' received an empty dataframe as input. The stage'
-                        ' is configured with _allow_empty_df = False'
-                        ), s.name)
-                
-                break            
-                        
-            result = self.execute_stage(stage=s,
+                tsg = tsg + (' This function received an empty dataframe as'
+                             ' input. Processing will halt as this function'
+                             ' is configured to only run when there is data'
+                             ' to process')
+                self.trace_append(msg=tsg,created_by=s,
+                              log_method=logger.info,**tw)
+                break
+            
+            
+            is_error = True
+            msg = ''
+            try:
+                result = self.execute_stage(stage=s,
                                         df=merge.df,
                                         start_ts=start_ts,
                                         end_ts=end_ts)
-            
-            #combine result with data from prior stages
-            #merge behavior influenced by stage params and cols delivered
-            new_cols = self.exec_stage_method(s,'get_output_list',None)            
-            produces_output_items  = self.get_stage_param(
-                                        s,'produces_output_items',True)
-            discard_prior_data = self.get_stage_param(
-                                        s,'_discard_prior_on_merge',False)
-            if discard_prior_data:
-                merge.clear_data()
-                logger.debug(('Prior data will be replaced by the results'
-                              ' of the %s stage. Cleared prior data'),
-                              s.name)
-            
-            if produces_output_items:
-                if new_cols is None or len(new_cols) ==0:
-                    raise AttributeError((
-                            'Stage %s did not provide a list of columns produced'
-                            ' when the get_output_list() method was called to'
-                            ' inspect the stage prior to execution. This is a '
-                            ' mandatory method. It should return a list with at '
-                            ' least one data item name' %s.name
-                            ))
                 
-                #execute the merge
-            
-                merge.execute(obj=result,col_names = new_cols)
-                
-                logger.debug('After merge row count: %s , Columns: %s, Index: %s',
-                             len(merge.df.index),
-                             list(merge.df.columns),
-                             merge.df.index.names)
+            except AttributeError as e:
+                msg = tsg + (' The function %s makes a reference to an'
+                       ' object property that does not exist. ') %s.name
+                self.trace_error(exception=e,msg=msg,created_by=s,**tw)
+            except SyntaxError as e:
+                msg = tsg + (' The function %s contains a syntax error.'
+                       ' If the function configuration includes a type-in'
+                       ' expression, make sure that this expression is '
+                       ' correct. ') %s.name
+                self.trace_error(exception=e,msg=msg,created_by=s,**tw)
+            except (ValueError,TypeError) as e:
+                msg = tsg + (' The function %s is operating on data that has an'
+                       ' unexpected value or data type.') %s.name
+                self.trace_error(exception=e,msg=msg,created_by=s,**tw)
+            except KeyError as e:
+                msg = tsg + (' The function %s is refering to a dictionary key or'
+                       ' dataframe column that doesnt exist') %s.name
+                self.trace_error(exception=e,msg=msg,created_by=s,**tw)
+            except NameError as e:
+                msg = tsg + (' The function %s referred to an object that does not'
+                       ' exist. You may be referring to data items in pandas'
+                       ' expressions, ensure that you refer to them by name,'
+                       ' ie: as a quoted string. ') %s.name
+                self.trace_error(exception=e,msg=msg,created_by=s,**tw)
+            except BaseException as e:
+                msg = tsg + (' The function %s failed to execute.') %s.name
+                self.trace_error(exception=e,msg=msg,created_by=s,**tw)
             else:
-                logger.debug(('Stage %s did not contribute any new data as '
-                              ' the stage param produces_output_items was'
-                              ' set to False'
-                              ), s.name)
+                is_error = False
+                
+            if is_error:
+                df = merge.df
+                abort = self.get_payload_param('_abort_on_fail',False)
+                if abort:
+                    can_proceed = False
+                    break
+                else:
+                    new_cols = self.exec_stage_method(s,'get_output_list',None)
+                    for c in new_cols:
+                        df[c] = None
+            else:
+                #combine result with data from prior stages
+                #merge behavior influenced by stage params and cols delivered
+
+                if discard_prior_data:
+                    merge.clear_data()
+                    tsg = tsg + ('Prior data will be replaced by the results'
+                                  ' of the function. Cleared prior data')
+                
+                if produces_output_items:
+                    if new_cols is None or len(new_cols) ==0:
+                        raise AttributeError((
+                                ' Function did not provide a list of columns produced'
+                                ' when the get_output_list() method was called to'
+                                ' inspect the stage prior to execution. This is a '
+                                ' mandatory method. It should return a list with at '
+                                ' least one data item name' 
+                                ))
+                    
+                    #execute the merge                
+                    merge.execute(obj=result,col_names = new_cols)
+                    
+                else:
+                    tsg = tsg + (' Function did not contribute any new data as'
+                                 ' the stage param produces_output_items was'
+                                 ' set to False' )
+                
+                #look for changes in the dataframe since last trace
+                if self.get_payload_param('trace_df_changes',False):
+                    tw['df'] = merge.df
+                    
+                    
+                #Write results of execution to trace
+                self.trace_append(msg=tsg,created_by=s,
+                              log_method=logger.info,**tw)                   
+                df = merge.df
             
-        return merge.df, can_proceed
+        return df, can_proceed
     
     def execute_stage(self,stage,df,start_ts,end_ts):
         
@@ -1508,6 +1646,8 @@ class JobController(object):
             result = stage.execute(df=df,start_ts=start_ts,end_ts=end_ts)
         except TypeError:
             is_executed = False
+        except BaseException as e:
+            raise e
         else:
             is_executed = True
         
@@ -1515,13 +1655,14 @@ class JobController(object):
         # the type error showing up in the stack trace when there is an
         # error executing
         if not is_executed:
-            result = stage.execute(df=df)
+            try:
+                result = stage.execute(df=df)
+            except BaseException as e:
+                raise e
         
         if isinstance(result,bool) and result:
             result = pd.DataFrame()
-            
-        logger.debug('Executed stage %s' ,stage.name )
-        
+                
         return result     
     
         
@@ -1530,6 +1671,12 @@ class JobController(object):
         try:
             return(getattr(self.payload,method_name)(**kwargs))
         except (TypeError,AttributeError):
+            logger.debug(('Error attempting to execute method %s() on'
+                          ' payload %s %s. This method does'
+                          ' not appear to be present. Returning'
+                          ' default value %s'),method_name,
+                          type(self.payload.name),self.payload.name,
+                          default_output)
             return(default_output)
             
     def exec_stage_method(self,stage,method_name,default_output,**kwargs):
@@ -1548,35 +1695,31 @@ class JobController(object):
         Gather job control metadata and return a dict keyed by schedule
         containing a dict that indicates for each schedule, when it will next 
         run, if it is currently due, the start date for data extraction and 
-        whether it should be marked complete at the end of execution.
+        which other schedules should be marked complete at the end of execution.
         '''
         
         schedule = OrderedDict()
         last_schedule_due = None
         all_due = []
         for (s,round_hour,round_min,backtrack) in self._schedules:
+            if backtrack is None:
+                backtrack = self.get_payload_param('default_backtrack',None)
             meta = {}
             schedule[s] = meta
-            meta['next_date'] = self.get_next_execution_date(s,execute_date)
+            meta['schedule'] = s
+            meta['execution_date'] = execute_date
+            result = self.get_next_execution_date(schedule=s,
+                                                  current_execution_date=execute_date,
+                                                  round_hour = round_hour,
+                                                  round_min =  round_min)
+            (meta['adjusted_exec_date'],meta['previous_execution_date']) = result
             meta['is_subsumed'] = False
             meta['prev_checkpoint'] = None
             meta['is_checkpoint_driven'] = False
             meta['round_hour'] = round_hour
             meta['round_min'] = round_min
-            # adjust the execution date to conform the a schedule
-            rounded_start = self.adjust_to_schedule(
-                    execute_date = meta['next_date'],
-                    start_hours = round_hour,
-                    start_min = round_min,
-                    interval = s)
-            if rounded_start != meta['next_date']:
-                meta['rounded_start'] = ('Start date revised to %s from %s due'
-                                         ' to rounding. ' 
-                                         %(rounded_start,meta['next_date']))
-                meta['next_date'] = rounded_start
-            else:
-                meta['rounded_start'] = ''
-            if meta['next_date'] <= execute_date:
+            meta['schedule_start'] = '%s:%s' %(round_hour,round_min)
+            if meta['adjusted_exec_date'] <= execute_date:
                 meta['is_due'] = True
                 meta['start_date'] = None
                 meta['backtrack'] = backtrack
@@ -1590,22 +1733,25 @@ class JobController(object):
                     if meta['prev_checkpoint'] is not None:
                         meta['start_date']= (
                                 meta['prev_checkpoint'] +
-                                pd.to_timedelta('1us')
+                                freq_to_timedelta('1us')
                                 )
-                    meta['backtrack'] = None
                 elif meta['backtrack'] is not None:
                     meta['start_date'] = (
-                            execute_date - 
-                            pd.to_timedelta(meta['backtrack'])
+                            meta['adjusted_exec_date'] - 
+                            freq_to_timedelta(meta['backtrack'])
                             )
                 meta['mark_complete'] = [s]
                 last_schedule_due = s
                 all_due.append(s)
+                next_future = meta['adjusted_exec_date'] + freq_to_timedelta(s)
+                meta['next_future_execution'] = next_future
             else:
+                #This schedule is not due
                 meta['is_due'] = False
                 meta['mark_complete'] = []
                 meta['backtrack'] = None
-
+                meta['next_future_execution'] = meta['adjusted_exec_date']
+                
         #progressive schedules imply that the last schedule involves
         # doing the work of the prior schedules so there it is only
         # neccessary to execute the last. If the schedules are not
@@ -1622,9 +1768,10 @@ class JobController(object):
                     if s == last_schedule_due:
                         meta['mark_complete'] = all_due
                         logger.debug(
-                                ('Schedule %s will execute. %s be marked'
-                                 ' complete'), last_schedule_due, all_due
-                                )
+                            'Schedule %s will execute', last_schedule_due)
+                        subsumed = [x for x in meta['mark_complete'] if x!=s]
+                        if len(subsumed) > 0:
+                            logger.debug('This schedules subsumes %s.', subsumed)
                     elif meta['is_due']:
                         meta['is_due'] = False
                         meta['is_subsumed'] = True
@@ -1690,7 +1837,6 @@ class JobController(object):
                         ' to the payload'),s.name
                         )
 
-        
         #Any code running outside of the main loop above will run whether or not
         # there where stages found. This is rather obvious, but what is not is that
         # is that build_stages is called multiple times for the same type of stage
@@ -1736,7 +1882,7 @@ class JobController(object):
         
         if len(chunks) == 0:            
             chunk_start = start_date
-            chunk_start = self.adjust_to_schedule(
+            chunk_start = self.adjust_to_start_date(
                                 execute_date=chunk_start,
                                 start_hours=round_hour,
                                 start_min=round_min,
@@ -1746,25 +1892,26 @@ class JobController(object):
                             'get_adjusted_start_date',
                             chunk_start,
                             **{'start_date' : chunk_start})
-            chunk_end = chunk_start + pd.to_timedelta(chunk_size)
+            chunk_end = chunk_start + freq_to_timedelta(chunk_size)
             chunk_end = min(chunk_end,end_date)
             logger.debug('First chunk will run %s to %s',
                          chunk_start, chunk_end)
             chunks.append((chunk_start,chunk_end))
             
             while chunk_end < end_date:    
-                chunk_start = chunk_end + pd.to_timedelta('1us')
+                chunk_start = chunk_end + freq_to_timedelta('1us')
                 chunk_start = self.exec_payload_method(
                                 'get_adjusted_start_date',
                                 chunk_start,
                                 **{'start_date' : chunk_start})
-                chunk_end = chunk_start + pd.to_timedelta(chunk_size)
+                chunk_end = chunk_start + freq_to_timedelta(chunk_size)
                 chunk_end = min(chunk_end,end_date)
                 logger.debug('Next chunk will run %s to %s',chunk_start,
                              end_date)
                 chunks.append((chunk_start,chunk_end))        
             
-        return chunks
+        return chunks            
+            
     
     def get_granularities(self):
         '''
@@ -1780,8 +1927,11 @@ class JobController(object):
         
         return granularites
             
-    def get_next_execution_date(self,schedule,current_execution_date):
-        
+    def get_next_execution_date(self,schedule,
+                                current_execution_date,
+                                round_hour= None,
+                                round_min = None):
+               
         '''
         Get the next scheduled execution date for a particular
         schedule for the current execution date
@@ -1793,13 +1943,37 @@ class JobController(object):
         if last_execution_date is None:
             next_execution = current_execution_date
         else:
-            next_execution = last_execution_date + pd.to_timedelta(schedule)            
-        logger.debug((
-                'Last execution of schedule %s was %s. Next execution is %s.'
-                'Evaluated at %s.'), schedule, last_execution_date, 
-                 next_execution, current_execution_date)
+            next_execution = last_execution_date + freq_to_timedelta(schedule)            
+        logger.debug(
+            'Last execution of schedule %s was %s. Next execution due %s.', 
+             schedule, last_execution_date, 
+             next_execution)
+
+        next_execution = self.adjust_to_start_date(
+                 execute_date = current_execution_date,
+                 start_hours = round_hour,
+                 start_min = round_min,
+                 interval = schedule
+                )
             
-        return next_execution
+        return (next_execution, last_execution_date)
+    
+    
+    def get_next_future_execution(self,schedule_metadata):
+        
+        '''
+        Get the next execution date across all schedules
+        '''
+        
+        next_future = None
+        for meta in list(schedule_metadata.values()):
+            if next_future is None or meta['next_future_execution'] < next_future:
+                next_future = meta['next_future_execution']
+                
+        logger.debug('Next scheduled execution date is %s', next_future)
+                
+        return next_future
+        
     
     def get_payload_param(self,param,default=None):
         
@@ -1847,21 +2021,82 @@ class JobController(object):
         try:
             out = getattr(stage,param)
         except AttributeError:
+            '''
             logger.debug(('No %s property on %s using default %s'),
                           param, stage.name, default )
+            '''
             out = default
         return out
 
     
-    def log_completion(self,schedule,timestamp,backtrack,trace=None):
+    def log_completion(self,metadata,status='complete',**kw):
         '''
         Log job completion
         '''
-
-        self.job_log.write(name = self.name,
-        schedule = schedule,
-        timestamp = timestamp,
-        trace = trace)
+        lw = {}
+        lw['execution_date'] = metadata['execution_date']
+        execution_log = self.exec_payload_method('log_save',None,**lw)
+        
+        trace = self.get_payload_param('_trace',None)
+        if trace is not None:
+            tw = { 
+                    'status': status,
+                    'next_future_execution' : metadata['next_future_execution']
+                 }
+            tw = {**kw,**lw,**tw}
+            trace.write(
+                    created_by = self,
+                    text = 'Execution completed',
+                    **tw
+                    )
+            trace.save()
+                    
+        for m in metadata['mark_complete']:
+            self.job_log.update(name = self.name,
+                                schedule = m,
+                                execution_date = metadata['execution_date'],
+                                status = status,
+                                next_execution_date = metadata['next_future_execution'],
+                                execution_log = execution_log)
+            
+    def log_failed_start(self,metadata,exception,status='aborted',
+                         startup_log = None, **kw):
+        '''
+        Log a job that was unable to start
+        '''
+        lw = {}
+        lw['execution_date'] = metadata['execution_date']
+        execution_log = self.exec_payload_method('log_save',None,**lw)        
+        tw = { 
+                'next_future_execution' : metadata['next_future_execution']
+            }
+        tw = {**kw,**lw,**tw}
+        trace = self.get_payload_param('_trace',None)
+        if not trace is None:
+            self.trace_error(
+                exception = exception,
+                created_by = self,
+                msg = 'Execution failed during startup',
+                **tw
+                    )
+            trace_name = trace.name
+            trace.save()
+            trace.stop()
+        else:
+            trace_name = None
+                    
+        for m in self._schedules:
+            
+            self.job_log.insert(name = self.name,
+                    schedule = m[0],
+                    execution_date = metadata['execution_date'],
+                    previous_execution_date = metadata['previous_execution_date'],
+                    next_execution_date =  metadata['next_future_execution'],
+                    status = status,
+                    startup_log = startup_log,
+                    execution_log = None,
+                    trace = trace_name)
+            
         
     def log_schedule_non_exec(self,schedule,schedule_metadata):
         '''
@@ -1872,31 +2107,125 @@ class JobController(object):
             logger.debug((
                     'Schedule %s skipped as the job controller is using a'
                     ' progressive schedule and this schedule is subsumed by'
-                    ' another. %s') , schedule, schedule_metadata['rounded_start']
+                    ' another.') , schedule
                     )
         else:                         
             logger.debug((
             'Hang tight. Schedule %s is only due for execution on %s.') 
             , schedule, 
-            schedule_metadata['next_date']
+            schedule_metadata['adjusted_exec_date']
             )
                 
-    def log_schedule_tagged_for_exec(self,schedule,schedule_metadata,execute_date):
+
+    def log_start(self,metadata,
+                  status='complete',
+                  startup_log =None):
         '''
-        Schedule was tagged for execution. Log more details about execution.
+        Log the start of a job. Reset the trace.
         '''
         
-        msg = 'Starting job %s for schedule %s at %s. %s' %(self.name,
-                    schedule,execute_date,schedule_metadata['rounded_start'])
-        if schedule_metadata['backtrack'] is not None:
-            msg = msg + 'Backtrack of %s specified.' %schedule_metadata['backtrack']
-        if schedule_metadata['is_checkpoint_driven']:
-            if schedule_metadata['prev_checkpoint'] is None:
-                msg = msg + 'No previous checkpoint. All data will be retrieved.'
-            else:
-                msg = msg + '.Previous checkpoint is %s' %schedule_metadata['prev_checkpoint']
-        logger.debug(msg)
+        tm={
+            'execution_date' : metadata['execution_date'],
+            'schedule' : metadata['schedule'],
+            'included_schedules' : metadata['mark_complete'],
+            'previous_successful_execution' : metadata['previous_execution_date'],
+            'is_checkpoint_driven' : metadata['is_checkpoint_driven'],
+            'schedule_start' : metadata['schedule_start'],
+            'backtrack_days' : metadata['backtrack'],
+            'next_future_execution' : metadata['next_future_execution']
+            }
         
+        if metadata['backtrack'] is None:
+            tm['backtrack_info'] = ('The backtrack setting for this execution'
+                                    ' is null. When the backtrack setting is'
+                                    ' null, the job retrieves all available'
+                                    ' data on each execution. To change this'
+                                    ' behavior, explicitly set period of time'
+                                    ' to backtrack or set the entity constant'
+                                    ' default_backtrack to "checkpoint" to'
+                                    ' retrieve data from the last checkpoint.')
+
+        elif metadata['backtrack'] == 'checkpoint':
+            tm['backtrack_info'] = ('The backtrack setting for this execution'
+                                    ' is "checkpoint". This means that only data'
+                                    ' inserted since the last checkpoint will be'
+                                    ' will be processed. If you need to '
+                                    ' retrieve historical data, set the '
+                                    ' backtrack property on the schedule or'
+                                    ' set the entity_type constant '
+                                    ' default_backtrack to None to retrieve'
+                                    ' all data')
+
+        else:
+            tm['backtrack_info'] = ('The backtrack setting for this execution'
+                                    ' is set to a specific number of days. '
+                                    ' The number of days was determined by'
+                                    ' taking the longest number of days from'
+                                    ' this schedule and others that were '
+                                    ' subsumed by it.'
+                                    ' Backtrack behavior can also be set'
+                                    ' using the entity type constant '
+                                    ' default_backtrack.'
+                                    ' Use a null value to retrieve all data'
+                                    ' with each execution or the specify the'
+                                    ' value of "checkpoint" to retrieve data'
+                                    ' inserted since the last checkpoint' )
+            
+        if metadata['adjusted_exec_date'] != metadata['execution_date']:
+            tm['adjusted_start_date'] = ('The start date for this execution '
+                                        ' was adjusted to match the explicit'
+                                        ' start hour and minute definined'
+                                        ' for the schedule' )
+        
+        if metadata['is_checkpoint_driven'] and metadata['prev_checkpoint'] is None:
+            tm['checkpoint_info'] = ('No previous checkpoint.'
+                                      ' All data will be retrieved')
+        
+        trace = self.get_payload_param('_trace',None)
+        if trace is None:
+            trace_name = None
+        else:
+            trace_name = self.build_trace_name(metadata['execution_date'])
+            trace.reset(
+                    name=trace_name,
+                    auto_save= self.get_payload_param('_auto_save_trace',None)
+                    )
+            trace.write(
+                    created_by = self,
+                    text = 'Started job',
+                    log_method=None,
+                    **tm
+                    )
+                    
+        for m in metadata['mark_complete']:
+            self.job_log.clear_old_running(name=self.name,schedule=m)
+            self.job_log.insert(name = self.name,
+                                schedule = m,
+                                execution_date = metadata['execution_date'],
+                                previous_execution_date = metadata['previous_execution_date'],
+                                next_execution_date =  metadata['next_future_execution'],
+                                status = status,
+                                startup_log = startup_log,
+                                execution_log = None,
+                                trace = trace_name)
+                        
+            
+    def raise_error(self,exception,msg='',stageName=None):
+        '''
+        Raise an exception, Include message and stage name.
+        '''
+        msg = 'Execution of job %s failed during stage %s because of %s: %s - %s ' %(
+                self.name,stageName,type(exception).__name__,str(exception),msg)
+        try:
+            tb = sys.exc_info()[2]
+        except TypeError:
+            raise StageException(msg, stageName)
+            tb = None
+        else:
+            raise StageException(msg, stageName).with_traceback(tb)
+            
+        return tb
+                      
     
     def remove_stage(self,job_spec,stage):
         '''
@@ -1929,6 +2258,7 @@ class JobController(object):
         
         for key,value in list(params.items()):
             setattr(self.payload, key, value)
+            logger.debug('Setting param %s on payload to %s', key, value)
         return self.payload
     
     def set_payload_param(self,key,value):
@@ -1936,7 +2266,6 @@ class JobController(object):
         Set the value of a single parameter
         
         '''
-        
         setattr(self.payload, key, value)
         return self.payload
     
@@ -1945,10 +2274,114 @@ class JobController(object):
         Set the value of single parameter for a particular stage
         
         '''
+        
         setattr(stage, param, value)
-        return stage        
+        return stage
+    
+    def sleep_until(self,next_execution):
+        '''
+        Pause execution until designated datetime value
+        '''
+        
+        wait_for = 0
+        if next_execution is not None:
+            wait_for = next_execution-dt.datetime.utcnow()
+            wait_for = wait_for.total_seconds()
+        if wait_for > 0:
+            logger.debug('Waiting %s seconds until next execution at %s',
+                          wait_for, next_execution)
+            time.sleep(wait_for)
+    
+    def trace_append(self,msg,created_by = None, log_method = None, **kwargs):
+        '''
+        Append to the trace information collected the entity type
+        '''
+        if created_by is None:
+            created_by = self
+        
+        try:
+            self.payload.trace_append(created_by=created_by,
+                                      msg = msg,
+                                      log_method=log_method,
+                                      **kwargs)
+        except AttributeError:
+            logger.debug(('Payload has no trace_append() method.'
+                          ' Trace will be written to log instead'))
+            logger.debug('Trace:%s',msg)
+            raise
+
+    def trace_end(self):
+        '''
+        Stop the autosave thread on the trace
+        '''       
+        trace = self.get_payload_param('_trace',None)
+        if trace is not None:
+            try:
+                trace.stop()
+            except AttributeError:
+                pass
+
+    def trace_error(self,exception,
+                    msg,
+                    created_by = None,
+                    log_method = logger.warning,
+                    **kwargs):
+        '''
+        Log the occurance of an error to the trace
+        '''
+        if created_by is None:
+            created_by = self
+            
+        try:
+            tb = sys.exc_info()[2]
+            tb = str(StageException(exception, created_by.name).with_traceback(tb))
+            print('****',tb)
+            raise
+        except TypeError:
+            tb = None
+            logger.debug('Unable to obtain stack trace for exception')
+            print('*******',tb)
+            raise
+        
+        error = {
+                'exception_type' : exception.__class__.__name__,
+                'exception': str(exception),
+                'stack_trace' : tb
+                }
+        
+        kwargs = {**error,**kwargs}
+        
+        trace = self.get_payload_param('_trace',None)
+        if trace is None:
+            log_method(('Payload has no trace object. An error occured.'
+                            ' Error will be written to the log instead'))
+            log_method('Trace:%s',msg)
+            log_method('Error:%s',error)            
+        else:
+            try:
+                trace.write(
+                        created_by=created_by,
+                        text = msg,
+                        log_method=log_method,
+                        **kwargs)
+            except AttributeError:
+                log_method(('Payload has no trace_append() method.'
+                          ' Error will be written to log instead'))
+                log_method('Trace:%s',msg)
+                log_method('Error:%s',error)
+        
         
 class JobLog(object):
+    
+    '''
+    Create and manage a database table to store job execution history.
+    
+    A job log entry is created at the start of job execution with a default
+    status of 'running'. This job log entry may be updated at various times
+    during the process. Each update may update the status, trace or log 
+    references.
+    
+    '''
     
     def __init__(self,job,table_name='job_log'):
         
@@ -1967,28 +2400,108 @@ class JobLog(object):
                 Column('object_type', String(255)),
                 Column('object_name', String(255)),
                 Column('schedule', String(255)),
-                Column('last_update', DateTime()),
+                Column('execution_date', DateTime()),
+                Column('previous_execution_date',DateTime()),
+                Column('next_execution_date',DateTime()),
+                Column('status',String(30)),
+                Column('startup_log',String(255)),
+                Column('execution_log',String(255)),
                 Column('trace',String(2000)),
                 **kw
                 )
         
         self.db.metadata.create_all(self.db.connection)
+
+    def clear_old_running(self,
+                          name,
+                          schedule):
         
-    def write (self,name,schedule,timestamp,trace=None):
+        q = self.table.select().\
+            where(and_(
+                self.table.c.object_type == self.job.payload.__class__.__name__,
+                self.table.c.object_name == name,
+                self.table.c.schedule == schedule,
+                self.table.c.status == 'running'                  
+                    ))
+        df = pd.read_sql(sql=q,con=self.db.connection)
+        
+        if len(df.index)>0:
+            upd = self.table.update().values(status='abandoned').\
+            where(and_(
+                self.table.c.object_type == self.job.payload.__class__.__name__,
+                self.table.c.object_name == name,
+                self.table.c.schedule == schedule,
+                self.table.c.status == 'running'                  
+                    ))
+            
+            self.db.connection.execute(upd)
+            logger.debug(
+                    'Marked existing running jobs as abandoned  (%s,%s)',
+                    name,schedule
+                    )
+            logger.debug(df)
+            self.db.commit()            
+        
+
+    def insert (self,name,schedule,execution_date,status='running',
+                previous_execution_date = None, next_execution_date = None,
+                startup_log=None,execution_log=None,trace=None):
         
         self.db.start_session()
         ins = self.table.insert().values(object_type = self.job.payload.__class__.__name__,
-                                   object_name = name,
-                                   schedule = schedule,
-                                   last_update = timestamp,
-                                   trace = trace
-                                   )
+                               object_name = name,
+                               schedule = schedule,
+                               execution_date = execution_date,
+                               previous_execution_date = previous_execution_date,
+                               next_execution_date = next_execution_date,
+                               status = status,
+                               startup_log = startup_log,
+                               execution_log = execution_log,
+                               trace = trace
+                               )
         self.db.connection.execute(ins)
         logger.debug((
-                'Completed execution. Wrote to job log (%s,%s): %s'),
-                name,schedule,timestamp
+                'Created job log entry (%s,%s): %s'),
+                name,schedule,execution_date
                 )
         self.db.commit()
+
+        
+    def update (self,name,schedule,execution_date, next_execution_date = None,
+                status=None, execution_log=None,trace=None):
+        
+        self.db.start_session()
+        
+        values = {}
+        if status is not None:
+            values['status'] = status
+        if execution_log is not None:
+            values['execution_log'] = execution_log            
+        if trace is not None:
+            values['trace'] = trace
+        if next_execution_date is not None:
+            values['next_execution_date'] = next_execution_date
+        if values:        
+            upd = self.table.update().\
+                where(and_(
+                        self.table.c.object_type == self.job.payload.__class__.__name__,
+                        self.table.c.object_name == name,
+                        self.table.c.schedule == schedule,
+                        self.table.c.execution_date == execution_date
+                        )).\
+                values(**values)
+            
+            self.db.connection.execute(upd)
+            logger.debug((
+                    'Updated job log (%s,%s): %s'),
+                    name,schedule,execution_date
+                    )
+            self.db.commit()
+        else:
+            logger.debug((
+                    'No non-null values supplied. job log was not updated (%s,%s): %s'),
+                    name,schedule,timestamp
+                    )                    
         
     def get_last_execution_date( self,name, schedule):
         
@@ -1996,11 +2509,12 @@ class JobLog(object):
         Last execution date for payload object name for particular schedule
         '''
         
-        col = func.max(self.table.c['last_update'])
-        query = select([col.label('last_update')]).where(and_(
+        col = func.max(self.table.c['execution_date'])
+        query = select([col.label('last_execution')]).where(and_(
                 self.table.c['object_type'] == self.job.payload.__class__.__name__,
                 self.table.c['object_name'] == name,
-                self.table.c['schedule'] == schedule
+                self.table.c['schedule'] == schedule,
+                self.table.c['status'] == 'complete'
                 ))
         result = self.db.connection.execute(query).first()
         

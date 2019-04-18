@@ -67,7 +67,7 @@ def compare_dataframes(dfl,dfr,cols=None):
     df = pd.concat(dfs)
     total_rows = len(df.index)
     df = df.drop_duplicates(keep=False)
-    if not df.empty and total_rows - len(df.index) > 0:
+    if total_rows - len(df.index) > 0:
         msg = 'Rows with different contents:%s' %(total_rows - len(df.index))
         trace = trace + msg
         differences = differences + total_rows - len(df.index)
@@ -493,6 +493,19 @@ class MemoryOptimizer:
         self.printCurrentMemoryConsumption(df_new)
 
         return df_new
+    
+def freq_to_timedelta(freq):
+    
+    '''
+    The pandas to_timedelta does not handle the full set of
+    set of pandas frequency abreviations. Convert to supported 
+    abreviation and the use to_timedelta.
+    '''
+    try:
+        freq = freq.replace('T','min')
+    except AttributeError:
+        pass
+    return (pd.to_timedelta(freq))
 
 class StageException(Exception):
     EXTENSION_DICT = 'extensionDict'

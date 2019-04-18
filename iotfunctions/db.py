@@ -9,16 +9,16 @@
 # *****************************************************************************
 
 import os
-import sys
 import datetime as dt
 import logging
 import urllib3
 import json
 import inspect
-import pandas as pd
-import subprocess
+import sys
 import gzip
 
+import pandas as pd
+import subprocess
 from pandas.api.types import is_string_dtype, is_numeric_dtype, is_bool_dtype, is_datetime64_any_dtype, is_dict_like
 from sqlalchemy import Table, Column, Integer, SmallInteger, String, DateTime, MetaData, ForeignKey, create_engine, Float, func, and_, or_
 from sqlalchemy.sql.sqltypes import TIMESTAMP,VARCHAR
@@ -26,9 +26,9 @@ from sqlalchemy.sql import select
 from sqlalchemy.orm.session import sessionmaker
 from sqlalchemy.exc import NoSuchTableError
 from .util import CosClient, resample
-from .enginelog import EngineLogging
 from . import metadata as md
 from . import pipeline as pp
+from .enginelog import EngineLogging
 
 logger = logging.getLogger(__name__)
 DB2_INSTALLED = True
@@ -40,6 +40,8 @@ except ImportError:
     DB2_INSTALLED = False
     msg = 'IBM_DB is not installed. Reverting to sqlite for local development with limited functionality'
     logger.warning(msg)
+    
+
 
 class Database(object):
     '''
@@ -214,6 +216,7 @@ class Database(object):
             msg = 'Created a default sqlite database. Database file is in your working directory. Filename is sqldb.db'
             logger.info(msg)
 
+        self.http = urllib3.PoolManager()
         try:
             self.cos_client = CosClient(self.credentials)
         except KeyError:
@@ -224,8 +227,8 @@ class Database(object):
             msg = 'created a CosClient object'
             logger.debug(msg)
 
-        EngineLogging.set_cos_client(self.cos_client)
-
+        EngineLogging.set_cos_client(self.cos_client)            
+                
         self.connection =  create_engine(connection_string, echo = echo, **connection_kwargs)
         self.Session = sessionmaker(bind=self.connection)
 
@@ -238,8 +241,7 @@ class Database(object):
             self.session = None
         self.metadata = MetaData(self.connection)
         logger.debug('Db connection established')
-
-        self.http = urllib3.PoolManager()
+            
         #cache entity types
         self.entity_type_metadata = {}
         metadata = self.http_request(object_type='allEntityTypes',
@@ -332,7 +334,7 @@ class Database(object):
         else:
             ret = None
         if ret is None:
-            logger.info('Not able to PUT %s to COS bucket %s', (filename, bucket))
+            logger.info('Not able to PUT %s to COS bucket %s',filename, bucket)
         return ret
 
     def cos_delete(self, filename, bucket=None):
@@ -416,13 +418,33 @@ class Database(object):
         logger.debug(msg)
 
         
-    def execute_job(self,entity_type_logical_name,schema=None,**kwargs):
+    def execute_job(self,entity_type,schema=None,**kwargs):
         
-        entity_type = self.load_entity_type(entity_type_logical_name,
-                                            schema = schema)
+        if isinstance(entity_type,str):
+            entity_type = self.load_entity_type(entity_type,
+                                            schema = schema, **kwargs)
         
         job = pp.JobController(payload=entity_type,**kwargs)
         job.execute()
+        
+    def get_as_datatype(self,column_object):
+        '''
+        Get the datatype of a sql alchemy column object and convert it to an
+        AS server datatype string
+        '''
+        
+        data_type = column_object.type
+        if isinstance(data_type,DOUBLE) or isinstance(data_type,Float) or isinstance(data_type,Integer):
+                data_type = 'NUMBER'
+        elif isinstance(data_type,VARCHAR) or isinstance(data_type,String):
+            data_type = 'LITERAL'
+        elif isinstance(data_type,TIMESTAMP) or isinstance(data_type,DateTime):
+            data_type = 'TIMESTAMP'
+        else:
+            data_type = str(data_type)
+            logger.warning('Unknown datatype %s for column %s' %(data_type,column_object.name))
+
+        return data_type            
         
         
     def get_catalog_module(self,class_name):
@@ -533,9 +555,22 @@ class Database(object):
         return [column.key for column in table.columns]
     
     
-    def http_request(self, object_type,object_name, request, payload=None, object_name_2=''):
+    def http_request(self,
+                     object_type,
+                     object_name,
+                     request,
+                     payload=None,
+                     object_name_2='',
+                     raise_error = False,
+                     ):
         '''
-        Make an api call to AS
+        Make an api call to AS.
+        
+        Warning: This is a low level API that closley maps to the AS Server API.
+        The AS Server API changes regularly. This API will not shield you from
+        these changes. Consult the iotfunctions wiki and view samples to understand
+        the supported APIs for interacting with the AS Server.
+        
         
         Parameters
         ----------
@@ -604,32 +639,51 @@ class Database(object):
         try:
             url =self.url[(object_type,request)]
         except KeyError:
-            raise ValueError ('This combination  of request_type and object_type is not supported by the python api')            
+            raise ValueError (('This combination  of request_type (%s) and' 
+                               ' object_type (%s) is not supported by the' 
+                               ' python api') %(object_type,request))            
             
         r = self.http.request(request,url, body = encoded_payload, headers=headers)
         response= r.data.decode('utf-8')
         
-        if not (200  <= r.status <=  299):
-            logger.debug('Http request status: %s' ,r.status)
+        if 200  <= r.status <=  299:
+            logger.debug('http request successful. status %s',r.status)
+        elif (request == 'POST' and
+              object_type in ['kpiFunction','defaultConstants','constants'] and
+              (500  <= r.status <=  599)
+              ):
+                logger.debug(('htpp POST failed. attempting PUT. status:%s'),
+                             r.status)
+                response = self.http_request(object_type = object_type,
+                                        object_name = object_name,
+                                        request = 'PUT',
+                                        payload = payload,
+                                        object_name_2 = object_name_2,
+                                        raise_error = raise_error
+                                        )
+        elif (400  <= r.status <=  499):
+            logger.debug('Http request client error. status: %s' ,r.status)
             logger.debug('url: %s', url)
             logger.debug('payload: %s', encoded_payload)                 
-            logger.debug('http response: %s', r.data)       
-
+            logger.debug('http response: %s', r.data)
+            if raise_error:
+                raise urllib3.exceptions.HTTPError(r.data)
+        elif (500  <= r.status <=  599):
+            logger.debug('Http request server error. status: %s' ,r.status)
+            logger.debug('url: %s', url)
+            logger.debug('payload: %s', encoded_payload)                 
+            logger.debug('http response: %s', r.data)
+            if raise_error:
+                raise urllib3.exceptions.HTTPError(r.data)
+        else :
+            logger.debug('Http request unknown error. status: %s' ,r.status)
+            logger.debug('url: %s', url)
+            logger.debug('payload: %s', encoded_payload)                 
+            logger.debug('http response: %s', r.data)
+            if raise_error:
+                raise urllib3.exceptions.HTTPError(r.data)
         
-        return response        
-
-    
-    def load_entity_type(self,logical_name,schema=None):
-        
-        params = {}
-        params['_db'] = self
-        params['_schema'] = schema
-        params['logical_name'] = logical_name
-        (params,meta) = md.retrieve_entity_type_metadata(**params)
-        et = md.EntityType(db=self,**params)
-        et.load_entity_type_functions()
-        
-        return et            
+        return response                
     
         
     def if_exists(self,table_name, schema=None):
@@ -658,7 +712,7 @@ class Database(object):
                      '--upgrade', url],
                      stderr=subprocess.STDOUT,
                      stdout=subprocess.PIPE,
-                     text=True)
+                     universal_newlines=True)
         except Exception as e:
             raise ImportError('pip install for url %s failed: \n%s',
                            url, str(e)) 
@@ -721,27 +775,26 @@ class Database(object):
                                            request = 'GET',
                                            payload = None))
         for fn in fns:
-            msg = 'identifying path from module and target %s' %fn["moduleAndTargetName"]
-            logger.debug(msg)
             path = fn["moduleAndTargetName"].split('.')
             name = fn["moduleAndTargetName"]
             if path is None:
                 msg = 'Cannot import %s it has an invalid module and path %s' %(name,path)
-                logger.debug(msg)
+                logger.warning(msg)
                 tobj = None
                 status = 'metadata_error'
             else:
                 (package,module,target) = (path[0],path[1],path[2])
                 if (function_list is not None) and (target not in function_list):
-                    logger.debug(('Skipping function %s as it is not in the' 
-                                  ' function list'), target)
                     continue                
                 if install_missing:
                     url = fn['url']
                 else:
                     url = None
                 try:
-                    tobj,status = self.import_target(package=package,module=module,target=target,url=url)    
+                    tobj,status = self.import_target(package=package,
+                                                     module=module,
+                                                     target=target,
+                                                     url=url)    
                 except Exception as e:
                     msg = 'unkown error when importing: %s' %name
                     logger.exception(msg)
@@ -759,16 +812,33 @@ class Database(object):
                 imported[target] = (package,module)
             else:
                 if (package,module) != (epackage,emodule):
-                    msg = 'Duplicate class name encountered on import of %s. Ignored %s.%s' %(name,package,module)
-                    logger.warning(msg)
+                    logger.warning(
+                        ('Duplicate class name encountered on import of'
+                         ' %s. Ignored %s.%s'),name,package,module)
+                    
             if status == 'target_error' and unregister_invalid_target:
                 self.unregister_functions([name])
                 msg = 'Unregistered invalid function %s' %name
                 logger.info(msg)
         
+        logger.debug('Imported %s functions from catalog',len(imported))
         self.function_catalog = result
                 
         return result
+    
+    
+    def load_entity_type(self,logical_name,schema=None,**params):
+        
+        extras = {}
+        extras['_db'] = self
+        extras['_schema'] = schema
+        extras['logical_name'] = logical_name
+        params = {**extras,**params}
+        (params,meta) = md.retrieve_entity_type_metadata(**params)
+        et = md.EntityType(db=self,**params)
+        et.load_entity_type_functions()
+        
+        return et        
     
     
     def subquery_join(self,left_query,right_query,*args,**kwargs):
@@ -1003,24 +1073,20 @@ class Database(object):
             functions = [functions]
             
         for f in functions:
-            module = f.__module__    
+            name = f.__class__.__name__
+            module = f.__module__
             if module == '__main__':
                 raise RuntimeError('The function that you are attempting to register is not located in a package. It is located in __main__. Relocate it to an appropriate package module.')
             if url is None:
                 url = f.url
-            module_and_target = '%s.%s' %(module,f.__name__)
-            exec_str = 'from %s import %s as import_test' %(module,f.__name__)
+            module_and_target = '%s.%s' %(module,name)
+            exec_str = 'from %s import %s as import_test' %(module,name)
             try:
                 exec (exec_str)
             except ImportError:
                 raise ValueError('Unable to register function as local import failed. Make sure it is installed locally and importable. %s ' %exec_str)
             msg = 'Test import succeeded for function using %s' %(exec_str)
-            try:
-                name = f.name
-            except AttributeError:
-                name = None
-            if name is None:
-                name = f.__name__
+
             try:
                 category = f.category
             except AttributeError:
@@ -1726,3 +1792,4 @@ class SlowlyChangingDimension(BaseTable):
         self.property_name = Column(property_name,datatype)
         self.id_col = Column(self._entity_id,String(50))
         super().__init__(name,database,self.id_col,self.start_date,self.end_date,self.property_name,**kw )
+
