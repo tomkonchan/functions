@@ -1334,7 +1334,6 @@ class JobController(object):
         while execute_date <= execute_until:
 
             EngineLogging.start_run_log(self.payload.tenant_id, self.payload.name)
-            
             logger.debug ((
                     'Starting execution number: %s with execution date: %s'),
                     execution_counter, execute_date
@@ -1364,9 +1363,11 @@ class JobController(object):
                     except BaseException as e:
                         logger.warning('Error logging non-execution data: %s',e)
                 else:
-                    self.log_start(meta,
-                                   status='running',
-                                   startup_log =None)
+                    self.log_start(
+                       meta,
+                       status='running',
+                       startup_log = EngineLogging.get_setup_log_cos_path(),
+                       execution_log = EngineLogging.get_current_run_log_cos_path())
                     try:
                         (preload_stages,cols) = self.get_stages(
                                             stage_type = 'preload',
@@ -2033,17 +2034,15 @@ class JobController(object):
         '''
         Log job completion
         '''
-        lw = {}
-        lw['execution_date'] = metadata['execution_date']
-        execution_log = self.exec_payload_method('log_save',None,**lw)
         
         trace = self.get_payload_param('_trace',None)
         if trace is not None:
             tw = { 
                     'status': status,
-                    'next_future_execution' : metadata['next_future_execution']
+                    'next_future_execution' : metadata['next_future_execution'],
+                    'execution_date' : metadata['execution_date']
                  }
-            tw = {**kw,**lw,**tw}
+            tw = {**kw,**tw}
             trace.write(
                     created_by = self,
                     text = 'Execution completed',
@@ -2056,8 +2055,8 @@ class JobController(object):
                                 schedule = m,
                                 execution_date = metadata['execution_date'],
                                 status = status,
-                                next_execution_date = metadata['next_future_execution'],
-                                execution_log = execution_log)
+                                next_execution_date = metadata['next_future_execution']
+                                )
             
     def log_failed_start(self,metadata,exception,status='aborted',
                          startup_log = None, **kw):
@@ -2119,7 +2118,8 @@ class JobController(object):
 
     def log_start(self,metadata,
                   status='complete',
-                  startup_log =None):
+                  startup_log = None,
+                  execution_log = None):
         '''
         Log the start of a job. Reset the trace.
         '''
@@ -2206,7 +2206,7 @@ class JobController(object):
                                 next_execution_date =  metadata['next_future_execution'],
                                 status = status,
                                 startup_log = startup_log,
-                                execution_log = None,
+                                execution_log = execution_log,
                                 trace = trace_name)
                         
             
@@ -2500,7 +2500,7 @@ class JobLog(object):
         else:
             logger.debug((
                     'No non-null values supplied. job log was not updated (%s,%s): %s'),
-                    name,schedule,timestamp
+                    name,schedule,execution_date
                     )                    
         
     def get_last_execution_date( self,name, schedule):
