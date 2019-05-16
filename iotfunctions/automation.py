@@ -12,33 +12,32 @@ import inspect
 import logging
 import datetime as dt
 import math
-from sqlalchemy.sql.sqltypes import TIMESTAMP,VARCHAR
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-def register(module,db):
+
+def register(module, db):
     '''
     Automatically register all functions in a module. To be regiserable, a function
     must have an class variable containing a dictionary of arguments (auto_register_args)
     '''
 
-    for (name,cls) in inspect.getmembers(module):
+    for (name, cls) in inspect.getmembers(module):
         try:
             kwargs = cls.auto_register_args
         except AttributeError:
             kwargs = None
         
-        if not kwargs is None:
-            args,varargs,keywords,defaults = (inspect.getargspec(cls.__init__))
-            args = args[1:]
-            stmt = 'mod.%s(**%s)' %(name,kwargs)
+        if kwargs is not None:
+            stmt = 'mod.%s(**%s)' % (name, kwargs)
             instance = eval(stmt)
             instance.db = db
             df = instance.get_test_data()
             instance.register(df=df)
-  
+
+
 class CategoricalGenerator(object):
     '''
     Generate categorical values.
@@ -51,18 +50,18 @@ class CategoricalGenerator(object):
         domain of values. if none give, will use defaults or generate random
     '''
     
-    #most commonly occuring value
+    # most commonly occuring value
     _mode = 5
     
-    def __init__(self , name, categories=None, weights = None):
+    def __init__(self, name, categories=None, weights=None):
         
         self.name = name
         if categories is None:
             categories = self.get_default_categories()
         self.categories = categories
         if weights is None:
-            weights = np.random.normal(1,0.1,len(self.categories))
-            mode = min(self._mode,len(self.categories))
+            weights = np.random.normal(1, 0.1, len(self.categories))
+            mode = min(self._mode, len(self.categories))
             for i in list(range(mode)):
                 weights[i] = weights[i] + i
             weights = weights / np.sum(weights)
@@ -73,54 +72,54 @@ class CategoricalGenerator(object):
         Return sample categoricals for a few predefined item names or generate
         '''
         
-        if self.name in ['company','company_id','company_code']:
-            return ['ABC','ACME','JDI']
-        if self.name in ['plant','plant_id','plant_code']:
-            return ['Zhongshun','Holtsburg','Midway']                
-        elif self.name in ['country','country_id','country_code']:
-            return ['US','CA','UK','DE']
-        elif self.name in ['firmware','firmware_version']:
-            return ['1.0','1.12','1.13','2.1']
+        if self.name in ['company', 'company_id', 'company_code']:
+            return ['ABC', 'ACME', 'JDI']
+        if self.name in ['plant', 'plant_id', 'plant_code']:
+            return ['Zhongshun', 'Holtsburg', 'Midway']
+        elif self.name in ['country', 'country_id', 'country_code']:
+            return ['US', 'CA', 'UK', 'DE']
+        elif self.name in ['firmware', 'firmware_version']:
+            return ['1.0', '1.12', '1.13', '2.1']
         elif self.name in ['manufacturer']:
-            return ['Rentech','GHI Industries']                
+            return ['Rentech', 'GHI Industries']
         elif self.name in ['zone']:
-            return ['27A','27B','27C']
-        elif self.name in ['status','status_code']:
-            return ['inactive','active']
-        elif self.name in ['operator','operator_id','person','employee']:
-            return ['Fred','Joe','Mary','Steve','Henry','Jane','Hillary','Justin','Rod']                
+            return ['27A', '27B', '27C']
+        elif self.name in ['status', 'status_code']:
+            return ['inactive', 'active']
+        elif self.name in ['operator', 'operator_id', 'person', 'employee']:
+            return ['Fred', 'Joe', 'Mary', 'Steve', 'Henry', 'Jane', 'Hillary', 'Justin', 'Rod']
         else:
-            #build a domain from the characters contained in the name
-            #this way the domain will be consistent between executions
+            # build a domain from the characters contained in the name
+            # this way the domain will be consistent between executions
             domain = []
             for d in list(self.name):
-                domain.extend(['%s%s'%(d,x) for x in self.name])
-            return  domain
+                domain.extend(['%s%s' % (d, x) for x in self.name])
+            return domain
                 
     def get_data(self, rows):    
         '''
         generate array of random categorical values
         '''        
-        return np.random.choice(self.categories,rows,p=self.weights)
-    
+        return np.random.choice(self.categories, rows, p=self.weights)
+
+
 class DateGenerator(object):
     '''
     Generate a array of random dates
-    
     '''
     _default_future_days = 0
     _default_past_days = 30
     
-    def __init__(self,name =None, start_date = None, end_date = None):
+    def __init__(self, name=None, start_date=None, end_date=None):
         
         self.name = name
         self.start_date = start_date
         self.end_date = end_date
         
-    def get_data(self,rows):
+    def get_data(self, rows):
         
-        days = list(np.random.uniform(-self._default_past_days,self._default_future_days,rows))
-        dates = [dt.datetime.utcnow() + dt.timedelta(days = x) for x in days]
+        days = list(np.random.uniform(-self._default_past_days, self._default_future_days, rows))
+        dates = [dt.datetime.utcnow() + dt.timedelta(days=x) for x in days]
         return dates
 
 
@@ -130,23 +129,23 @@ class MetricGenerator(object):
     
     Will support predefined names in the future with named ranges in case
     you are wondering why this is needed
-    
     '''
     _default_future_days = 0
     _default_past_days = 30
     
-    def __init__(self,name = None , mean = None , sd = None):
+    def __init__(self, name=None, mean=None, sd=None):
         
         self.name = name
         self.mean = mean
         self.sd = sd
         
-    def get_data(self,rows):
+    def get_data(self, rows):
         
-        metrics = np.random.normal(self.mean,self.sd,rows)
+        metrics = np.random.normal(self.mean, self.sd, rows)
         
         return metrics
-                
+
+
 class TimeSeriesGenerator(object):
 
     ''' 
@@ -182,26 +181,26 @@ class TimeSeriesGenerator(object):
     _timestamp = 'evt_timestamp'
     _entity_id = 'deviceid'
 
-    def __init__(self,metrics=None,
-                      ids=None,
-                      days=0,
-                      seconds=300,
-                      freq='1min',
-                      categoricals = None,
-                      dates=None,
-                      increase_per_day = 0.0001,
-                      noise = 0.1 ,
-                      day_harmonic = 0.2,
-                      day_of_week_harmonic = 0.2,
-                      timestamp = None,
-                      domains = None,
-                      ):
+    def __init__(self, metrics=None,
+                 ids=None,
+                 days=0,
+                 seconds=300,
+                 freq='1min',
+                 categoricals=None,
+                 dates=None,
+                 increase_per_day=0.0001,
+                 noise=0.1,
+                 day_harmonic=0.2,
+                 day_of_week_harmonic=0.2,
+                 timestamp=None,
+                 domains=None,
+                 ):
         
         if timestamp is not None:
             self._timestamp = timestamp
     
         if metrics is None:
-            metrics = ['x1','x2','x3']
+            metrics = ['x1', 'x2', 'x3']
         
         if categoricals is None:
             categoricals = []
@@ -217,13 +216,13 @@ class TimeSeriesGenerator(object):
         self.dates = dates
         
         if ids is None:
-            ids = ['sample_%s' %x for x in list(range(10))]
+            ids = ['sample_%s' % x for x in list(range(10))]
         self.ids = ids
         
         self.days = days
         self.seconds = seconds
         self.freq = freq
-        #optionally scale using dict keyed on metric name
+        # optionally scale using dict keyed on metric name
         self.data_item_mean = {}
         self.data_item_sd = {}
         
@@ -232,28 +231,27 @@ class TimeSeriesGenerator(object):
         self.day_harmonic = day_harmonic
         self.day_of_week_harmonic = day_of_week_harmonic
         
-        #domain is a dictionary of lists keyed on categorical item names
-        #the list contains that values of the categoricals 
+        # domain is a dictionary of lists keyed on categorical item names
+        # the list contains that values of the categoricals
         if domains is None:
             domains = {}
         self.domain = domains
- 
-        
-    def get_data(self,start_ts=None,end_ts=None,entities=None):
+
+    def get_data(self, start_ts=None, end_ts=None, entities=None):
         
         end = dt.datetime.utcnow()
         start = end - dt.timedelta(days=self.days)
         start = start - dt.timedelta(seconds=self.seconds)
         
-        ts = pd.date_range(end=end,start=start,freq=self.freq)
+        ts = pd.date_range(end=end, start=start, freq=self.freq)
         y_cols = []
         y_cols.extend(self.metrics)
         y_cols.extend(self.dates)
         y_count = len(y_cols)
         rows = len(ts)
-        noise = np.random.normal(0,1,(rows,y_count))
+        noise = np.random.normal(0, 1, (rows, y_count))
         
-        df = pd.DataFrame(data=noise,columns=y_cols)
+        df = pd.DataFrame(data=noise, columns=y_cols)
         df[self._entity_id] = np.random.choice(self.ids, rows)
         df[self._timestamp] = ts
         
@@ -279,37 +277,36 @@ class TimeSeriesGenerator(object):
                 categories = self.domain[d]
             except KeyError:
                 categories = None
-            gen = CategoricalGenerator(d, categories= categories)
+            gen = CategoricalGenerator(d, categories=categories)
             df[d] = gen.get_data(len(df.index))
             
         for t in self.dates:
-            df[t] = dt.datetime.utcnow() + pd.to_timedelta(df[t],unit = 'D')
+            df[t] = dt.datetime.utcnow() + pd.to_timedelta(df[t], unit='D')
             df[t] = pd.to_datetime(df[t])
             
-        df.set_index([self._entity_id,self._timestamp])
-        msg = 'Generated %s rows of time series data from %s to %s' %(rows,start,end)
+        df.set_index([self._entity_id, self._timestamp])
+        msg = 'Generated %s rows of time series data from %s to %s' % (rows, start, end)
         logger.debug(msg)
         
         return df
     
-    def execute(self,df=None):
+    def execute(self, df=None):
         df = self.get_data()
         return df
-        
-    
-    def set_mean(self,metric,mean):
+
+    def set_mean(self, metric, mean):
         '''
         Set the mean value of generated numeric item
         '''        
         self.data_item_mean[metric] = mean
         
-    def set_sd(self,metric,sd):
+    def set_sd(self, metric, sd):
         '''
         Set the standard deviation of a generated numeric item
         '''                
         self.data_item_sd[metric] = sd
         
-    def set_domain(self,item_name,values):
+    def set_domain(self, item_name, values):
         '''
         Set the values for a generated categorical item
         '''
@@ -319,10 +316,6 @@ class TimeSeriesGenerator(object):
         '''
         Set parameters based using supplied dictionary
         '''
-        for key,value in list(params.items()):
+        for key, value in list(params.items()):
             setattr(self, key, value)
-        return self        
-    
-
-
-
+        return self

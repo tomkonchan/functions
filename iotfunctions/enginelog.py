@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 
 class EngineLogging:
-
     FORMATTER = logging.Formatter(fmt='%(asctime)s.%(msecs)03d %(name)s.%(funcName)s %(levelname)s %(message)s',
                                   datefmt='%Y-%m-%dT%H:%M:%S', style='%')
     consoleHandler = logging.StreamHandler(sys.stdout)
@@ -105,7 +104,7 @@ class EngineLogging:
                         cls.cosClient.cos_put(cos_path, gzip.compress(file.read().encode()), bucket=bucket)
                 except Exception as ex:
                     raise Exception(('The log file %s could not be transferred to Object Store '
-                                    'in bucket %s under %s: %s') %
+                                     'in bucket %s under %s: %s') %
                                     (file_name, bucket, cos_path, str(ex))) from ex
                 else:
                     logger.info('File %s was successfully stored in Object Store in bucket %s under %s' %
@@ -115,7 +114,7 @@ class EngineLogging:
                                 'because environment variable COS_BUCKET_LOGGING has not been set.') % file_name)
         else:
             logger.warning(('The log file %s could not be transferred to Object Store '
-                           'because access to Object Store has not been configured yet.') % file_name)
+                            'because access to Object Store has not been configured yet.') % file_name)
 
     @classmethod
     def set_cos_client(cls, cos_client):

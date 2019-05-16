@@ -12,39 +12,40 @@ import datetime as dt
 
 logger = logging.getLogger(__name__)
 
+
 class BaseUIControl(object):
-    
     is_ui_control = True
 
-    def convert_datatype(self,from_datatype):
+    def convert_datatype(self, from_datatype):
         conversions = {bool: 'BOOLEAN',
                        str: 'LITERAL',
                        float: 'NUMBER',
                        int: 'NUMBER',
                        dict: 'JSON',
                        dt.datetime: 'TIMESTAMP',
-                       None : None
+                       None: None
                        }
         try:
             return conversions[from_datatype]
         except KeyError:
-            msg = 'couldnt convert type %s ' %from_datatype
+            msg = 'couldnt convert type %s ' % from_datatype
             raise TypeError(msg)
-            
-    def convert_schema_datatype(self,from_datatype):
+
+    def convert_schema_datatype(self, from_datatype):
         conversions = {bool: 'boolean',
                        str: 'string',
                        float: 'number',
                        int: 'number',
                        dt.datetime: 'number',
-                       None : None
+                       None: None
                        }
         try:
             return conversions[from_datatype]
         except KeyError:
-            msg = 'couldnt convert type %s ' %from_datatype
-            raise TypeError(msg)            
-                
+            msg = 'couldnt convert type %s ' % from_datatype
+            raise TypeError(msg)
+
+
 class UIFunctionOutSingle(BaseUIControl):
     '''
     Single output item
@@ -60,11 +61,11 @@ class UIFunctionOutSingle(BaseUIControl):
     tags: list of strs
         Optional tags, e.g. ['DIMENSION', 'EVENT', 'ALERT']
     '''
-    
+
     type_ = 'OUTPUT_DATA_ITEM'
-    
-    def __init__(self,name, datatype=None, description=None, tags = None):
-        
+
+    def __init__(self, name, datatype=None, description=None, tags=None):
+
         self.name = name
         self.datatype = datatype
         if description is None:
@@ -73,14 +74,14 @@ class UIFunctionOutSingle(BaseUIControl):
         if tags is None:
             tags = []
         self.tags = tags
-        
+
     def to_metadata(self):
         meta = {
-                'name' : self.name,
-                'dataType' : self.convert_datatype(self.datatype),
-                'description' : self.description,
-                'tags' : self.tags
-                }
+            'name': self.name,
+            'dataType': self.convert_datatype(self.datatype),
+            'description': self.description,
+            'tags': self.tags
+        }
         return meta
 
 
@@ -103,16 +104,16 @@ class UIFunctionOutMulti(BaseUIControl):
     tags: list of strs
         Optional tags, e.g. ['DIMENSION', 'EVENT', 'ALERT']
     '''
-    
+
     type_ = 'OUTPUT_DATA_ITEM'
-    
-    def __init__(self,name, cardinality_from,
-                 is_datatype_derived = False,
-                 datatype = None,
+
+    def __init__(self, name, cardinality_from,
+                 is_datatype_derived=False,
+                 datatype=None,
                  description=None,
-                 tags = None,
-                 output_item = None):
-        
+                 tags=None,
+                 output_item=None):
+
         self.name = name
         self.cardinality_from = cardinality_from
         self.is_datatype_derived = is_datatype_derived
@@ -125,32 +126,33 @@ class UIFunctionOutMulti(BaseUIControl):
         if tags is None:
             tags = []
         self.tags = tags
-        
+
     def to_metadata(self):
-        
+
         if not self.datatype is None:
             datatype = [self.datatype]
         else:
-            datatype= None
-                    
+            datatype = None
+
         meta = {
-                'name' : self.name,
-                'cardinalityFrom' : self.cardinality_from,
-                'dataTypeForArray' : datatype,
-                'description' : self.description,
-                'tags' : self.tags,
-                'jsonSchema' : {
-                                "$schema" : "http://json-schema.org/draft-07/schema#",
-                                "type" : "array",
-                                "items" : {"type": "string"}
-                                }
-                }
-                
+            'name': self.name,
+            'cardinalityFrom': self.cardinality_from,
+            'dataTypeForArray': datatype,
+            'description': self.description,
+            'tags': self.tags,
+            'jsonSchema': {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "array",
+                "items": {"type": "string"}
+            }
+        }
+
         if self.is_datatype_derived:
             meta['dataTypeFrom'] = self.cardinality_from
-                
+
         return meta
-    
+
+
 class UISingleItem(BaseUIControl):
     '''
     Choose a single item as a function argument
@@ -168,12 +170,12 @@ class UISingleItem(BaseUIControl):
     tags: list of strs
         Optional tags, e.g. ['DIMENSION', 'EVENT', 'ALERT']
     '''
-    
+
     type_ = 'DATA_ITEM'
-    
-    def __init__(self,name, datatype=None, description=None, required = True,
-                 tags = None):
-        
+
+    def __init__(self, name, datatype=None, description=None, required=True,
+                 tags=None):
+
         self.name = name
         self.datatype = datatype
         self.required = required
@@ -183,25 +185,26 @@ class UISingleItem(BaseUIControl):
         if tags is None:
             tags = []
         self.tags = tags
-        
+
     def to_metadata(self):
-        
+
         if self.datatype is None:
             datatype = None
         else:
             datatype = self.convert_datatype(self.datatype)
-        
+
         meta = {
-                'name' : self.name,
-                'type' : self.type_ ,
-                'dataType' : datatype,
-                'required' : self.required,
-                'description' : self.description,
-                'tags' : self.tags
-                }
-        
+            'name': self.name,
+            'type': self.type_,
+            'dataType': datatype,
+            'required': self.required,
+            'description': self.description,
+            'tags': self.tags
+        }
+
         return meta
-    
+
+
 class UIMultiItem(BaseUIControl):
     '''
     Multi-select list of data items
@@ -223,16 +226,16 @@ class UIMultiItem(BaseUIControl):
     tags: list of strs
         Optional tags, e.g. ['DIMENSION', 'EVENT', 'ALERT'] 
     '''
-    
+
     type_ = 'DATA_ITEM'
-    
-    def __init__(self,name, datatype=None, description=None, required = True,
-                 min_items = None, max_items = None, tags = None,
-                 output_item = None,
-                 is_output_datatype_derived = False,
-                 output_datatype = None
+
+    def __init__(self, name, datatype=None, description=None, required=True,
+                 min_items=None, max_items=None, tags=None,
+                 output_item=None,
+                 is_output_datatype_derived=False,
+                 output_datatype=None
                  ):
-        
+
         self.name = name
         self.datatype = datatype
         self.required = required
@@ -249,62 +252,62 @@ class UIMultiItem(BaseUIControl):
         if tags is None:
             tags = []
         self.tags = tags
-        #the following metadata is optional
-        #used to create an array output for this input
+        # the following metadata is optional
+        # used to create an array output for this input
         self.output_item = output_item
         self.is_output_datatype_derived = is_output_datatype_derived
         self.output_datatype = output_datatype
-        
+
     def to_metadata(self):
-        
+
         if self.datatype is None:
             datatype = None
         else:
             datatype = [self.convert_datatype(self.datatype)]
-        
+
         meta = {
-                'name' : self.name,
-                'type' : self.type_ ,
-                'dataType' : 'ARRAY',
-                'dataTypeForArray' : datatype,
-                'required' : self.required,
-                'description' : self.description,
-                'tags' : self.tags,
-                'jsonSchema' : {
-                                "$schema" : "http://json-schema.org/draft-07/schema#",
-                                "type" : "array",
-                                "minItems" : self.min_items,
-                                "maxItems" : self.max_items,
-                                "items" : {"type": "string"}
-                                }
-                }
+            'name': self.name,
+            'type': self.type_,
+            'dataType': 'ARRAY',
+            'dataTypeForArray': datatype,
+            'required': self.required,
+            'description': self.description,
+            'tags': self.tags,
+            'jsonSchema': {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "array",
+                "minItems": self.min_items,
+                "maxItems": self.max_items,
+                "items": {"type": "string"}
+            }
+        }
         return meta
 
     def to_output_metadata(self):
-        
-        if self.output_item is not None:        
+
+        if self.output_item is not None:
             if not self.output_datatype is None:
                 datatype = [self.convert_datatype(self.output_datatype)]
             else:
-                datatype= None
-                        
+                datatype = None
+
             meta = {
-                    'name' : self.output_item,
-                    'cardinalityFrom' : self.name,
-                    'dataTypeForArray' : datatype,
-                    'description' : self.description,
-                    'tags' : self.tags,
-                    'jsonSchema' : {
-                                    "$schema" : "http://json-schema.org/draft-07/schema#",
-                                    "type" : "array",
-                                    "items" : {"type": "string"}
-                                    }
-                    }
-                    
+                'name': self.output_item,
+                'cardinalityFrom': self.name,
+                'dataTypeForArray': datatype,
+                'description': self.description,
+                'tags': self.tags,
+                'jsonSchema': {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "array",
+                    "items": {"type": "string"}
+                }
+            }
+
             if self.is_output_datatype_derived:
                 meta['dataTypeFrom'] = self.name
-                            
-            return meta        
+
+            return meta
         else:
             return None
 
@@ -332,15 +335,15 @@ class UIMulti(BaseUIControl):
     values: list
         Values to display in UI picklist        
     '''
-    
+
     type_ = 'CONSTANT'
-    
-    def __init__(self,name, datatype, description=None, required = True,
-                 min_items = None, max_items = None, tags = None, values = None,
-                 output_item = None,
-                 is_output_datatype_derived = False,
-                 output_datatype = None):
-        
+
+    def __init__(self, name, datatype, description=None, required=True,
+                 min_items=None, max_items=None, tags=None, values=None,
+                 output_item=None,
+                 is_output_datatype_derived=False,
+                 output_datatype=None):
+
         self.name = name
         self.datatype = datatype
         self.required = required
@@ -358,71 +361,71 @@ class UIMulti(BaseUIControl):
             tags = []
         self.tags = tags
         self.values = values
-        #the following metadata is optional
-        #used to create an array output for this input
+        # the following metadata is optional
+        # used to create an array output for this input
         self.output_item = output_item
         self.is_output_datatype_derived = is_output_datatype_derived
         self.output_datatype = output_datatype
-        
-        
+
     def to_metadata(self):
-        
+
         if self.datatype is None:
-            msg = 'Datatype is required for multi constant array input %s' %self.name
+            msg = 'Datatype is required for multi constant array input %s' % self.name
             raise ValueError(msg)
         else:
             datatype = [self.convert_datatype(self.datatype)]
             schema_datatype = self.convert_schema_datatype(self.datatype)
-        
+
         meta = {
-                'name' : self.name,
-                'type' : self.type_ ,
-                'dataType' : 'ARRAY',
-                'dataTypeForArray' : datatype,
-                'required' : self.required,
-                'description' : self.description,
-                'tags' : self.tags,
-                'values' : self.values,
-                'jsonSchema' : {
-                                "$schema" : "http://json-schema.org/draft-07/schema#",
-                                "type" : "array",
-                                "minItems" : self.min_items,
-                                "maxItems" : self.max_items,
-                                "items" : {"type": schema_datatype }
-                                }
-                }
-        return meta 
-    
+            'name': self.name,
+            'type': self.type_,
+            'dataType': 'ARRAY',
+            'dataTypeForArray': datatype,
+            'required': self.required,
+            'description': self.description,
+            'tags': self.tags,
+            'values': self.values,
+            'jsonSchema': {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "array",
+                "minItems": self.min_items,
+                "maxItems": self.max_items,
+                "items": {"type": schema_datatype}
+            }
+        }
+        return meta
+
     def to_output_metadata(self):
-        
-        if self.output_item is not None:        
+
+        if self.output_item is not None:
             if self.output_datatype is not None:
                 datatype = [self.convert_datatype(self.output_datatype)]
                 schema_type = self.convert_schema_datatype(self.output_datatype)
             else:
-                datatype= None
+                datatype = None
                 schema_type = None
-                        
+
             meta = {
-                    'name' : self.output_item,
-                    'cardinalityFrom' : self.name,
-                    'dataTypeForArray' : datatype,
-                    'description' : self.description,
-                    'tags' : self.tags,
-                    'jsonSchema' : {
-                                    "$schema" : "http://json-schema.org/draft-07/schema#",
-                                    "type" : "array",
-                                    "items" : {"type": schema_type}
-                                    }
-                    }
-                    
+                'name': self.output_item,
+                'cardinalityFrom': self.name,
+                'dataTypeForArray': datatype,
+                'description': self.description,
+                'tags': self.tags,
+                'jsonSchema': {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "array",
+                    "items": {"type": schema_type}
+                }
+            }
+
             if self.is_output_datatype_derived:
                 meta['dataTypeFrom'] = self.name
-                            
-            return meta        
+
+            return meta
         else:
-            return None    
-    
+            return None
+
+
 class UISingle(BaseUIControl):
     '''
     Single valued constant
@@ -441,13 +444,13 @@ class UISingle(BaseUIControl):
         Optional tags, e.g. ['DIMENSION', 'EVENT', 'ALERT']
     values: list
         Values to display in UI picklist        
-    '''    
-    
+    '''
+
     type_ = 'CONSTANT'
-    
-    def __init__(self,name, datatype=None, description=None, tags = None,
-                 required = True, values = None, default = None):
-        
+
+    def __init__(self, name, datatype=None, description=None, tags=None,
+                 required=True, values=None, default=None):
+
         self.name = name
         self.datatype = datatype
         if description is None:
@@ -459,26 +462,26 @@ class UISingle(BaseUIControl):
         self.required = required
         self.values = values
         self.default = default
-        
+
     def to_metadata(self):
         meta = {
-                'name' : self.name,
-                'type' : self.type_,
-                'dataType' : self.convert_datatype(self.datatype),
-                'description' : self.description,
-                'tags' : self.tags,
-                'required' : self.required,
-                'values' : self.values
-                }
-        
+            'name': self.name,
+            'type': self.type_,
+            'dataType': self.convert_datatype(self.datatype),
+            'description': self.description,
+            'tags': self.tags,
+            'required': self.required,
+            'values': self.values
+        }
+
         if self.default is not None:
-            if isinstance(self.default,dict):
+            if isinstance(self.default, dict):
                 meta['value'] = self.default
             else:
-                meta['value'] = {'value':self.default}
-        
+                meta['value'] = {'value': self.default}
+
         return meta
-    
+
 
 class UIText(UISingle):
     '''
@@ -496,11 +499,11 @@ class UIText(UISingle):
         Optional tags, e.g. ['DIMENSION', 'EVENT', 'ALERT']
     default: str
         Optional default
-    '''    
-    
-    def __init__(self,name = 'expression', description=None, tags = None,
-                 required = True, default = None):
-        
+    '''
+
+    def __init__(self, name='expression', description=None, tags=None,
+                 required=True, default=None):
+
         if description is None:
             description = 'Enter text'
         self.description = description
@@ -508,9 +511,10 @@ class UIText(UISingle):
             tags = ['TEXT']
         else:
             tags.append('TEXT')
-            
-        super().__init__(name = name,description = description,tags=tags,
-                     required = required, default = default, datatype = str)
+
+        super().__init__(name=name, description=description, tags=tags,
+                         required=required, default=default, datatype=str)
+
 
 class UIExpression(UIText):
     '''
@@ -528,11 +532,11 @@ class UIExpression(UIText):
         Optional tags, e.g. ['DIMENSION', 'EVENT', 'ALERT']
     default: str
         Optional default
-    '''    
-    
-    def __init__(self,name = 'expression', description=None, tags = None,
-                 required = True, default = None):
-        
+    '''
+
+    def __init__(self, name='expression', description=None, tags=None,
+                 required=True, default=None):
+
         if description is None:
             description = 'Enter a python expression'
         self.description = description
@@ -540,14 +544,6 @@ class UIExpression(UIText):
             tags = ['EXPRESSION']
         else:
             tags.append('EXPRESSION')
-            
-        super().__init__(name = name,description = description,tags=tags,
-                     required = required, default = default)
 
-        
-  
-
-    
-
-    
-    
+        super().__init__(name=name, description=description, tags=tags,
+                         required=required, default=default)
