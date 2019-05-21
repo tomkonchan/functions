@@ -169,21 +169,19 @@ class AggregateWithExpression(BaseSimpleAggregator):
     @classmethod
     def build_ui(cls):
         inputs = []
-        inputs.append(UIMultiItem(name='input_items',
-                                  datatype=None,
-                                  description=('Choose the data items'
-                                               ' that you would like to'
-                                               ' aggregate'),
-                                  output_item='output_items',
-                                  is_output_datatype_derived=True
-                                  ))
-
-        inputs.append(UIExpression(name='expression',
-                                   description='Paste in or type an AS expression',
-                                   datatype=str))
-
+        inputs.append(UIMultiItem(name = 'input_items',
+                                  datatype= None,
+                                  description = ('Choose the data items'
+                                                 ' that you would like to'
+                                                 ' aggregate'),
+                                  output_item = 'output_items',
+                                  is_output_datatype_derived = True))
+                                  
+        inputs.append(UIExpression(name = 'expression',
+                                   description = 'Paste in or type an AS expression'))
+        
         return (inputs, [])
-
+        
     def aggregate(self, x):
         return eval(self.expression)
 
@@ -192,9 +190,7 @@ class AlertExpression(BaseEvent):
     '''
     Create alerts that are triggered when data values reach a particular range.
     '''
-
-    def __init__(self, input_items, expression, alert_name):
-        self.input_items = input_items
+    def __init__(self, expression , alert_name):
         self.expression = expression
         self.alert_name = alert_name
         super().__init__()
@@ -226,32 +222,28 @@ class AlertExpression(BaseEvent):
     def build_ui(cls):
         # define arguments that behave as function inputs
         inputs = []
-        inputs.append(UIMultiItem(name='input_items',
-                                  datatype=None,
-                                  description='Input items'
-                                  ))
         inputs.append(UIExpression(name='expression',
-                                   datatype=str,
                                    description="Define alert expression using pandas systax. "
-                                               "Example: df['inlet_temperature']>50"
-                                   ))
-        # define arguments that behave as function outputs
+                                               "Example: df['inlet_temperature']>50"))
+        #define arguments that behave as function outputs
         outputs = []
         outputs.append(UIFunctionOutSingle(name='alert_name',
                                            datatype=bool,
-                                           description='Output of alert function'
-                                           ))
+                                           description='Output of alert function'))
         return (inputs, outputs)
-
-
+    
+    
 class AlertOutOfRange(BaseEvent):
     """
     Fire alert when metric exceeds an upper threshold or drops below a lower_theshold. Specify at least one threshold.
     """
-
-    def __init__(self, input_item, lower_threshold=None, upper_threshold=None,
-                 output_alert_upper='output_alert_upper', output_alert_lower='output_alert_lower'):
-
+    
+    def __init__ (self, input_item,
+                  lower_threshold=None,
+                  upper_threshold=None,
+                  output_alert_upper='output_alert_upper',
+                  output_alert_lower='output_alert_lower'):
+        
         self.input_item = input_item
         if not lower_threshold is None:
             lower_threshold = float(lower_threshold)
@@ -511,8 +503,8 @@ class CoalesceDimension(BaseTransformer):
 
 class ConditionalItems(BaseTransformer):
     """
-    Set the value of a data item based on the value of a conditional expression 
-    eg. if df["sensor_is_valid"]==True then df["temp"] and df["pressure"] are valid else null
+    Return null unless a condition is met.
+    eg. if df["sensor_is_valid"]==True then deliver the value of df["temperature"] else deliver Null
     """
 
     def __init__(self, conditional_expression, conditional_items, output_items=None):
@@ -538,9 +530,7 @@ class ConditionalItems(BaseTransformer):
         inputs = []
         inputs.append(UIExpression(
             name='conditional_expression',
-            datatype=str,
-            description="expression that returns a True/False value, eg. if df['sensor_is_valid']==True"
-        ))
+            description="expression that returns a True/False value, eg. if df['sensor_is_valid']==True"))
         inputs.append(UIMultiItem(
             name='conditional_items',
             datatype=None,
@@ -572,18 +562,18 @@ class DateDifference(BaseTransformer):
         self.date_1 = date_1
         self.date_2 = date_2
         self.num_days = num_days
-
+        
     def execute(self, df):
-
-        if self.date_1 is None:
+        
+        if self.date_1 is None or self.date_1 == self._entity_type._timestamp:
             ds_1 = self.get_timestamp_series(df)
             if isinstance(ds_1, pd.DatetimeIndex):
                 ds_1 = pd.Series(data=ds_1, index=df.index)
             ds_1 = pd.to_datetime(ds_1)
         else:
             ds_1 = df[self.date_1]
-
-        if self.date_2 is None:
+            
+        if self.date_2 is None or self.date_2 == self._entity_type._timestamp:
             ds_2 = self.get_timestamp_series(df)
             if isinstance(ds_2, pd.DatetimeIndex):
                 ds_2 = pd.Series(data=ds_2, index=df.index)
@@ -619,11 +609,11 @@ class DateDifference(BaseTransformer):
         outputs = []
         outputs.append(
             UIFunctionOutSingle(
-                name='num_days',
-                datatype=dt.datetime,
-                description='Number of days')
-        )
-
+                    name='num_days',
+                    datatype=float,
+                    description='Number of days')
+            )
+                
         return (inputs, outputs)
 
 
@@ -637,12 +627,17 @@ class DateDifferenceReference(BaseTransformer):
 
         super().__init__()
         self.date_1 = date_1
+
+        if isinstance(ref_date,int):
+            ref_date = dt.datetime.fromtimestamp(ref_date)
+
         self.ref_date = ref_date
         self.num_days = num_days
+        
 
     def execute(self, df):
 
-        if self.date_1 is None:
+        if self.date_1 is None or self.date_1 == self._entity_type._timestamp:
             ds_1 = self.get_timestamp_series(df)
             if isinstance(ds_1, pd.DatetimeIndex):
                 ds_1 = pd.Series(data=ds_1, index=df.index)
@@ -678,14 +673,13 @@ class DateDifferenceReference(BaseTransformer):
         outputs = []
         outputs.append(
             UIFunctionOutSingle(
-                name='num_days',
-                datatype=dt.datetime,
-                description='Number of days')
-        )
-
+                    name='num_days',
+                    datatype=float,
+                    description='Number of days')
+            )
+                
         return (inputs, outputs)
-
-
+    
 class DateDifferenceConstant(BaseTransformer):
     """
     Calculate the difference between a data item and a constant_date,
@@ -698,10 +692,10 @@ class DateDifferenceConstant(BaseTransformer):
         self.date_1 = date_1
         self.date_constant = date_constant
         self.num_days = num_days
-
+        
     def execute(self, df):
-
-        if self.date_1 is None:
+        
+        if self.date_1 is None or self.date_1 == self._entity_type._timestamp:
             ds_1 = self.get_timestamp_series(df)
             if isinstance(ds_1, pd.DatetimeIndex):
                 ds_1 = pd.Series(data=ds_1, index=df.index)
@@ -739,17 +733,19 @@ class DateDifferenceConstant(BaseTransformer):
         outputs = []
         outputs.append(
             UIFunctionOutSingle(
-                name='num_days',
-                datatype=dt.datetime,
-                description='Number of days')
-        )
-
+                    name='num_days',
+                    datatype=float,
+                    description='Number of days')
+            )
+                
         return (inputs, outputs)
 
 
 class DatabaseLookup(BaseDatabaseLookup):
     """
-    Lookup Company information from a database table        
+    Lookup columns from a database table. The lookup is time invariant. Lookup key column names
+    must match data items names. Example: Lookup EmployeeCount and Country from a Company lookup
+    table that is keyed on country_code.
     """
 
     # create the table and populate it using the data dict
@@ -818,9 +814,9 @@ class DeleteInputData(BasePreload):
         entity_type = self.get_entity_type()
         self.get_db().delete_data(table_name=entity_type.name,
                                   schema=entity_type._db_schema,
-                                  timestamp='evt_timestamp',
+                                  timestamp=entity_type._timestamp,
                                   older_than_days=self.older_than_days)
-        msg = 'Deleted data for %s' % (self._entity_type.name)
+        msg = 'Deleted data for %s' % self._entity_type.name
         logger.debug(msg)
         return True
 
@@ -1016,7 +1012,8 @@ class EntityDataGenerator(BasePreload):
 
 class EntityFilter(BaseMetadataProvider):
     '''
-    Filter data source results on a list of entity ids
+    Filter data retrieval queries to retrieve only data for the entity ids
+    included in the filter
     '''
 
     def __init__(self, entity_list, output_item='is_filter_set'):
@@ -1199,7 +1196,13 @@ class EntityId(BaseTransformer):
 
 class IfThenElse(BaseTransformer):
     """
-    Set the value of a data item based on the value of a conditional expression
+    Set the value of the output_item based on a conditional expression.
+    When the conditional expression returns a True value, return the value of the true_expression.
+
+    Example:
+    conditional_expression: df['x1'] > 5 * df['x2']
+    true expression: df['x2'] * 5
+    false expression: 0
     """
 
     def __init__(self, conditional_expression, true_expression, false_expression, output_item='output_item'):
@@ -1208,7 +1211,7 @@ class IfThenElse(BaseTransformer):
         self.true_expression = self.parse_expression(true_expression)
         self.false_expression = self.parse_expression(false_expression)
         self.output_item = output_item
-
+        
     def execute(self, df):
         c = self._entity_type.get_attributes_dict()
         df = df.copy()
@@ -1222,18 +1225,12 @@ class IfThenElse(BaseTransformer):
         # define arguments that behave as function inputs
         inputs = []
         inputs.append(UIExpression(name='conditional_expression',
-                                   datatype=str,
                                    description="expression that returns a True/False value, "
-                                               "eg. if df['temp']>50 then df['temp'] else None"
-                                   ))
+                                               "eg. if df['temp']>50 then df['temp'] else None"))
         inputs.append(UIExpression(name='true_expression',
-                                   datatype=str,
-                                   description="expression when true, eg. df['temp']"
-                                   ))
+                                   description="expression when true, eg. df['temp']"))
         inputs.append(UIExpression(name='false_expression',
-                                   datatype=str,
-                                   description='expression when false, eg. None'
-                                   ))
+                                   description='expression when false, eg. None'))
         # define arguments that behave as function outputs
         outputs = []
         outputs.append(UIFunctionOutSingle(name='output_item',
@@ -1262,7 +1259,7 @@ class PackageInfo(BaseTransformer):
             version_output = ['%s_version' % x for x in package_names]
         self.version_output = version_output
         super().__init__()
-
+        
     def execute(self, df):
         import importlib
         entity_type = self.get_entity_type()
@@ -1271,12 +1268,12 @@ class PackageInfo(BaseTransformer):
             ver = ''
             try:
                 installed_package = importlib.import_module(p)
-            except (ImportError, ModuleNotFoundError):
+            except (BaseException):
                 if self.install_missing:
                     entity_type.db.install_package(p)
                     try:
                         installed_package = importlib.import_module(p)
-                    except (ImportError, ModuleNotFoundError):
+                    except (BaseException):
                         ver = 'Package could not be installed'
                     else:
                         try:
@@ -1353,11 +1350,11 @@ class PythonFunction(BaseTransformer):
             self.function_name = function_name
 
         self.parameters = parameters
-
+        
     def execute(self, df):
-
+        
         # function may have already been serialized to cos
-
+        
         kw = {}
 
         if not self.function_code.startswith('def '):
@@ -1411,10 +1408,9 @@ class PythonFunction(BaseTransformer):
         inputs = []
         inputs.append(UIMultiItem('input_items'))
         inputs.append(UIText(name='function_code',
-                             datatype=str,
                              description='Paste in your function definition'
-                             )
-                      )
+                            )
+                     )
         inputs.append(UISingle(name='parameters',
                                datatype=dict,
                                required=False,
@@ -1623,8 +1619,9 @@ class RandomChoiceString(BaseTransformer):
         self.domain_of_values = domain_of_values
         self.probabilities = adjust_probabilities(probabilities)
         self.output_item = output_item
-
+        
     def execute(self, df):
+        
         df[self.output_item] = np.random.choice(
             a=self.domain_of_values,
             p=self.probabilities,
@@ -1635,18 +1632,22 @@ class RandomChoiceString(BaseTransformer):
     @classmethod
     def build_ui(cls):
         # define arguments that behave as function inputs
+
         inputs = []
         inputs.append(UIMulti(name='domain_of_values',
                               datatype=str,
+                              required=True))
+        inputs.append(UIMulti(name='probabilities',
+                              datatype=float,
                               required=False))
-        inputs.append(UIMulti(name='probabilities', datatype=float))
-        # define arguments that behave as function outputs
+        #  define arguments that behave as function outputs
         outputs = []
-        outputs.append(UIFunctionOutSingle(name='output_item',
-                                           datatype=str,
-                                           description='Random output',
-                                           tags=['DIMENSION']
-                                           ))
+        outputs.append(UIFunctionOutSingle(
+                            name='output_item',
+                            datatype=str,
+                            description='Random output',
+                            tags=['DIMENSION']
+                        ))
 
         return (inputs, outputs)
 
@@ -1664,10 +1665,10 @@ class RandomDiscreteNumeric(BaseTransformer):
 
     def execute(self, df):
         df[self.output_item] = np.random.choice(
-            a=self.discrete_values,
-            p=self.probabilities,
-            size=len(df.index))
-
+                a=self.discrete_values,
+                p=self.probabilities,
+                size=len(df.index))
+        
         return df
 
     @classmethod
@@ -1679,11 +1680,12 @@ class RandomDiscreteNumeric(BaseTransformer):
                               required=False))
         # define arguments that behave as function outputs
         outputs = []
-        outputs.append(UIFunctionOutSingle(name='output_item',
-                                           datatype=float,
-                                           description='Random output'
-                                           ))
-
+        outputs.append(UIFunctionOutSingle(
+            name='output_item',
+            datatype=float,
+            description='Random output'
+            ))
+    
         return (inputs, outputs)
 
 
@@ -1700,19 +1702,20 @@ class SaveCosDataFrame(BaseTransformer):
         self.filename = filename
         self.columns = columns
         self.output_item = output_item
-
+        
     def execute(self, df):
+        
         if self.columns is not None:
-            df = df[self.columns]
+            sf = df[self.columns]
+        else:
+            sf = df
         db = self.get_db()
         bucket = self.get_bucket_name()
-        db.cos_save(persisted_object=df,
+        db.cos_save(persisted_object=sf,
                     filename=self.filename,
                     bucket=bucket,
                     binary=True)
-
         df[self.output_item] = True
-
         return df
 
     @classmethod

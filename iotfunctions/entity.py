@@ -19,6 +19,7 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, func
 from . import metadata
 from . import bif
 from . import ui
+from . import estimator as est
 
 logger = logging.getLogger(__name__)
 
@@ -151,38 +152,45 @@ class Robot(metadata.BaseCustomEntityType):
 
         # granularities
         granularities = []
-
-        # columns
-        columns = [Column('plant_code', String(50)),
-                   Column('torque', Float()),
-                   Column('load', Float())]
-
-        # functions
+        
+        #columns
+        columns = []
+        columns.append(Column('plant_code', String(50)))
+        columns.append(Column('torque', Float()))
+        columns.append(Column('load', Float()))
+        columns.append(Column('speed', Float()))
+        columns.append(Column('travel_time', Float()))
+        
+        #functions
         functions = []
-        # simulation settings
-        sim = {
-            'freq': '5min',
-            'scd_frequency': '90min',
-            'activity_frequency': '4H',
-            'data_item_mean': {'torque': 12,
-                               'load': 375,
-                               },
-            'scds': {'operator': ['Fred K',
-                                  'Mary J',
-                                  'Jane S',
-                                  'Jeff H',
-                                  'Harry L',
-                                  'Steve S']
-                     },
-            'activities': {
-                'maintenance': ['scheduled_maint',
-                                'unscheduled_maint',
-                                'firmware_upgrade',
-                                'testing'],
-                'setup': ['normal_setup', 'reconfiguration'],
-            },
-            'drop_existing': False
-        }
+        #simulation settings
+        sim = { 
+                'freq': '5min',
+                'scd_frequency': '90min',
+                'activity_frequency': '4H',
+                'data_item_mean': {'torque': 12,
+                                   'load': 375,
+                                   'speed': 3,
+                                   'travel_time': 1
+                                   },
+                'scds': {'operator': [
+                    'Fred K',
+                    'Mary J',
+                    'Jane S',
+                    'Jeff H',
+                    'Harry L',
+                    'Steve S']
+                        },
+                'activities': {
+                        'maintenance': [
+                            'scheduled_maint',
+                            'unscheduled_maint',
+                            'firmware_upgrade',
+                            'testing'],
+                        'setup': ['normal_setup', 'reconfiguration'],
+                        },
+                'drop_existing': False
+                }
         generator = bif.EntityDataGenerator(ids=None, **sim)
         functions.append(generator)
 
@@ -270,8 +278,9 @@ class Robot(metadata.BaseCustomEntityType):
 
 
 class PackagingHopper(metadata.BaseCustomEntityType):
-    '''
-    This sample demostrates anomaly detection on simulated data from a cereal
+    
+    '''  
+    This sample demonstrates anomaly detection on simulated data from a cereal
     packaging plant.
     '''
 
@@ -308,31 +317,28 @@ class PackagingHopper(metadata.BaseCustomEntityType):
 
         # fill rate depends on temp
         functions.append(bif.PythonExpression(
-            expression='502 + 9 * df["ambient_temp"]/20',
-            output_name='dispensed_mass_predicted'))
+                expression = '502 + 9 * df["ambient_temp"]/20',
+                output_name = 'dispensed_mass_sim'))
 
-        functions.append(bif.RandomNoise(input_items=['dispensed_mass_predicted'],
-                                         standard_deviation=0.5,
-                                         output_items=['dispensed_mass_actual']))
+        functions.append(bif.RandomNoise(input_items=['dispensed_mass_sim'],
+                                    standard_deviation = 0.5,
+                                    output_items = ['dispensed_mass_actual']))
 
-        # difference between prediction and actual
-        functions.append(bif.PythonExpression(
-            expression=('(df["dispensed_mass_predicted"]-'
-                        ' df["dispensed_mass_actual"]).abs()'),
-            output_name='prediction_abs_error'))
-
-        # alert
-        functions.append(bif.AlertHighValue(
-            input_item='prediction_abs_error',
-            upper_threshold=3,
-            alert_name='anomaly_in_fill_detected'))
+        functions.append(est.SimpleAnomaly(
+            features=['ambient_temp','ambient_humidity'],
+            targets=['dispensed_mass_actual'],
+            threshold=1,
+            predictions=['dispensed_mass_predicted'],
+            alerts=['anomaly_in_fill_detected']))
 
         # dimension columns
-        dimension_columns = [Column('firmware', String(50)),
-                             Column('manufacturer', String(50)),
-                             Column('plant', String(50)),
-                             Column('line', String(50))]
-
+        dimension_columns = [
+            Column('firmware',String(50)),
+            Column('manufacturer',String(50)),
+            Column('plant',String(50)),
+            Column('line',String(50))
+            ]
+        
         super().__init__(name=name,
                          db=db,
                          constants=constants,

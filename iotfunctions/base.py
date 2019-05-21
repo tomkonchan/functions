@@ -203,6 +203,7 @@ class BaseFunction(object):
                            columns=None,
                            generate_days=0,
                            granularities=None,
+                           db=None,
                            **params):
 
         if name is None:
@@ -211,17 +212,19 @@ class BaseFunction(object):
         # a local entity type exists in memory only. No db object or tables.
 
         et = LocalEntityType(
-            name=name,
-            columns=columns,
-            functions=functions
-        )
-
+              name = name,
+              columns = columns,
+              functions = functions,
+              db = db,
+              **params
+              )
+        
         return et
 
     @classmethod
     def build_ui(cls):
         """
-        Define metadata for function registration explicly.
+        Define metadata for function registration explicitly.
         """
 
         raise NotImplementedError(
@@ -357,9 +360,14 @@ class BaseFunction(object):
         if suffix is not None:
             name.append(suffix)
         name = '.'.join(name)
-        return name
-
+        return name     
+        
     def _get_arg_metadata(self, isoformat_dates=True):
+        
+        '''
+        Return a dictionary keyed on the argument name containing
+        the argument value.
+        '''
 
         metadata = {}
         args = (getargspec(self.__init__))[0][1:]
@@ -1290,23 +1298,31 @@ class BaseFunction(object):
         for key, value in list(params.items()):
             setattr(self, key, value)
         return self
+ 
+    def execute_local_test(self, generate_days = 1,
+                           columns = None,
+                           to_csv = True,
+                           db = None,
+                           **params):
+        '''
+        Run an automated test of the function using generated data.
+        Automated test will run using a local entity type
+        '''
 
-    def execute_local_test(self, generate_days=1, columns=None, to_csv=True, **params):
-        '''
-        Run an automated test of the function using generated data
-        '''
         et = self._build_entity_type(
-            generate_days=generate_days,
-            functions=[self],
-            columns=columns,
-            **params
-        )
-
+                generate_days = generate_days,
+                functions = [self],
+                columns = columns,
+                db = db,
+                **params
+                )
+        
         # set params
         self._entity_type = et
         self.set_params(**params)
-
-        df = et.generate_data(days=generate_days, columns=et.local_columns)
+        
+        df = et.generate_data(days = generate_days,columns=et.local_columns)
+        df = et.index_df(df)
         df = self.execute(df=df)
         if to_csv:
             filename = 'df_%s.csv' % et.name
@@ -1488,6 +1504,7 @@ class BaseDataSource(BaseTransformer):
         Retrieve data and combine with pipeline data
         '''
         new_df = self.get_data(start_ts=None, end_ts=None, entities=None)
+        new_df = self._entity_type.index_df(new_df)
         self.log_df_info(df, 'source dataframe before merge')
         self.log_df_info(new_df, 'additional data source to be merged')
         overlapping_columns = list(set(new_df.columns.intersection(set(df.columns))))
@@ -2225,7 +2242,7 @@ class BaseEstimatorFunction(BaseTransformer):
     test_size = 0.2
     # Model evaluation
     stop_auto_improve_at = 0.85
-    acceptable_score_for_model_acceptance = 0
+    acceptable_score_for_model_acceptance = -10
     greater_is_better = True
     version_model_writes = False
 
@@ -2394,22 +2411,37 @@ class BaseEstimatorFunction(BaseTransformer):
         msg = 'Completed preprocessing'
         logger.debug(msg)
         return df
-
+        
     def execute_train_test_split(self, df):
+
         '''
         Split dataframe into test and training sets
         '''
+
         df_train, df_test = train_test_split(df, test_size=self.test_size)
         self.log_df_info(df_train, msg='training set', include_data=False)
         self.log_df_info(df_test, msg='test set', include_data=False)
         return (df_train, df_test)
 
-    def find_best_model(self, df_train, df_test, target, features, existing_model):
+    def find_best_model(self,df_train, df_test, target, features, existing_model):
+
+        '''
+
+        Attempt to train a better model than the current existing model.
+
+        :param df_train: DataFrame containing training data
+        :param df_test: DataFrame containing test data
+        :param target: str
+        :param features: list of strs
+        :param existing_model: Model object
+        :return: Model object
+        '''
+
         metric_name = self.eval_metric.__name__
-        estimators = self.make_estimators(names=None, count=self.experiments_per_execution)
 
-        print()
+        # build a list of estimators to fit as experiments
 
+        estimators = self.make_estimators(names=None, count = self.experiments_per_execution)
         if existing_model is None:
             trained_models = []
             best_test_metric = None
@@ -2419,24 +2451,24 @@ class BaseEstimatorFunction(BaseTransformer):
             best_test_metric = existing_model.eval_metric_test
             best_model = existing_model
         for (name, estimator, params) in estimators:
-            estimator = self.fit_with_search_cv(estimator=estimator,
-                                                params=params,
-                                                df_train=df_train,
-                                                target=target,
-                                                features=features)
+            estimator = self.fit_with_search_cv(estimator = estimator,
+                                                params = params,
+                                                df_train = df_train,
+                                                target = target,
+                                                features = features)
             eval_metric_train = estimator.score(df_train[features], df_train[target])
             msg = 'Trained estimator %s with an %s score of %s' % \
                   (self.__class__.__name__, metric_name, eval_metric_train)
             logger.debug(msg)
-            model = Model(name=self.get_model_name(target_name=target),
-                          target=target,
-                          features=features,
-                          params=estimator.best_params_,
-                          eval_metric_name=metric_name,
-                          eval_metric_train=eval_metric_train,
-                          estimator=estimator,
-                          estimator_name=name,
-                          shelf_life_days=self.shelf_life_days)
+            model = Model(name = self.get_model_name(target_name = target),
+                          target = target,
+                          features = features,
+                          params = estimator.best_params_,
+                          eval_metric_name = metric_name,
+                          eval_metric_train = eval_metric_train,
+                          estimator = estimator,
+                          estimator_name = name,
+                          shelf_life_days = self.shelf_life_days)
             eval_metric_test = model.score(df_test)
             trained_models.append(model)
             if best_test_metric is None:

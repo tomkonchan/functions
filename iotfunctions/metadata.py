@@ -211,6 +211,7 @@ class EntityType(object):
     '''
 
     is_entity_type = True
+    is_local = False
     auto_create_table = True
     log_table = 'KPI_LOGGING'  # deprecated, to be removed
     checkpoint_table = 'KPI_CHECKPOINT'  # deprecated,to be removed
@@ -263,12 +264,12 @@ class EntityType(object):
     drop_null_class = DropNull
     enable_downcast = False
     allow_projection_list_trim = False
-
+    
     # deprecated class variables (to be removed)
     _checkpoint_by_entity = True  # manage a separate checkpoint for each entity instance
-
+    
     def __init__(self, name, db, *args, **kwargs):
-
+        
         logger.debug('Initializing new entity type using iotfunctions %s',
                      iotf.__version__)
 
@@ -352,7 +353,7 @@ class EntityType(object):
         grains = list(categorized.get('granularity', []))
 
         #  create a database table if needed using cols
-        if name is not None and db is not None:
+        if name is not None and db is not None and not self.is_local:
             try:
                 self.table = self.db.get_table(self.name, self._db_schema)
             except KeyError:
@@ -1376,11 +1377,11 @@ class EntityType(object):
         if drop_existing and self.db is not None:
             self.db.drop_table(self.name, schema=self._db_schema)
             self.drop_child_tables()
-
+                
         exclude_cols = ['deviceid', 'devicetype', 'format', 'updated_utc', 'logicalinterface_id', self._timestamp]
-        if self.db is None:
+        if self.db is None or self.is_local:
             write = False
-            msg = 'This is a null entity with no database connection, test data will not be written'
+            msg = 'This is a local entity or entity with no database connection, test data will not be written'
             logger.debug(msg)
             (metrics, dates, categoricals, others) = self.get_local_column_lists_by_type(columns)
         else:
@@ -2100,53 +2101,91 @@ class LocalEntityType(EntityType):
     Entity type for local testing. No db connection required.
     '''
 
-    def __init__(self,
-                 name,
-                 columns=None,
-                 constants=None,
-                 granularities=None,
-                 functions=None,
-                 dimension_columns=None
-                 ):
+    is_local = True
 
-        fn_cols = self._build_cols_for_fns(functions=functions, columns=columns)
+    def __init__ (self,
+                  name,
+                  columns=None,
+                  constants=None,
+                  granularities=None,
+                  functions=None,
+                  db=None,
+                  **kwargs):
+
         if columns is None:
             columns = []
-        columns.extend(fn_cols)
+        self.local_columns = list(self._build_cols_for_fns(functions=functions, columns=columns))
 
-        self.local_columns = columns
+        args = []
+        args.extend(self.local_columns)
+        if constants is not None:
+            args.extend(constants)
+        if functions is not None:
+            args.extend(functions)
+        if granularities is not None:
+            args.extend(granularities)
 
-        super().__init__(name=name,
-                         db=None,
-                         columns=columns,
-                         constants=constants,
-                         granularities=granularities,
-                         functions=functions,
-                         dimension_columns=dimension_columns,
-                         generate_days=0)
+        super().__init__(name, db, *args, **kwargs)
+
 
     def _build_cols_for_fns(self, functions, columns=None):
 
-        if functions is None:
-            functions = []
+        '''
+        Get a list of dataframe column names referenced as function
+        arguments
 
+        functions is a list of function objects
+        columns is a list of known sql alchemy column object
+
+        returns a set of sql alchemy column objects
+        This set contains the previously known columns and the
+        required columns inferred from function inputs
+
+        '''
+
+        # build a dictionary of the known column objects
         if columns is None:
             columns = []
-
-        if not isinstance(functions, list):
-            functions = [functions]
-
+        cols = set(columns)
         cols_dict = {}
         for c in columns:
-            cols_dict[c.name] = c.type
+            cols_dict[c.name] = c
 
-        cols = []
-        for f in functions:
+        # examine the function objects to discover columns not referenced in the dictionary
+        if functions is not None:
+            if not isinstance(functions,list):
+                functions = [functions]
+            for f in functions:
+                # use the metadata about the function inputs to find all the
+                # input data items
+                # use the argument values to find the input item names
+                (inputs, outputs) = f.build_ui()
+                args = f._get_arg_metadata()
+                for i in inputs:
+                    if i.type_ == 'DATA_ITEM':
+                        values = args[i.name]
+                        if not isinstance(values,list):
+                            values = [values]
+                        for value in values:
+                            existing_col = cols_dict.get(value, None)
+                            if existing_col is None:
+                                logger.warning(('Building column for function input %s with unknown type'
+                                                'Assuming datatype of Float. To change the type, '
+                                                'define a column called %s with the appropriate type'),
+                                                value, value)
+                                cols_dict[value] = Column(value, Float)
 
-            args = f._get_arg_metadata()
-            for (arg, value) in list(args.items()):
-                datatype = cols_dict.get(value, Float)
-                cols.append(Column(value, datatype))
+                    if 'EXPRESSION' in i.tags:
+                        expression_cols = f.get_input_items()
+                        for c in expression_cols:
+                            existing_col = cols_dict.get(c, None)
+                            if existing_col is None:
+                                logger.warning(('Building column for expression input %s with unknown type'
+                                                'Assuming datatype of Float. To change the type, '
+                                                'define a column called %s with the appropriate type'), c, c)
+                                cols_dict[c] = Column(c, Float)
+
+            cols = set(cols_dict.values())
 
         return cols
 
@@ -2614,14 +2653,17 @@ class Trace(object):
 
 
 class Model(object):
+
     '''
     Predictive model
     '''
 
-    def __init__(self, name, estimator, estimator_name, params,
-                 features, target, eval_metric_name, eval_metric_train,
-                 shelf_life_days):
-
+    def __init__(self, name , estimator, estimator_name , params,
+                 features, target, eval_metric_name,
+                 eval_metric_train=None,
+                 eval_metric_test=None,
+                 shelf_life_days=None):
+        
         self.name = name
         self.target = target
         self.features = features
@@ -2629,8 +2671,8 @@ class Model(object):
         self.estimator_name = estimator_name
         self.params = params
         self.eval_metric_name = eval_metric_name
-        self.eval_metric_train = None
-        self.eval_metric_test = None
+        self.eval_metric_train = eval_metric_train
+        self.eval_metric_test = eval_metric_test
         if self.estimator is None:
             self.trained_date = None
         else:
@@ -2660,10 +2702,10 @@ class Model(object):
         logger.info(msg)
         return result
 
-    def score(self, df):
+    def score (self, df):
         result = self.estimator.score(df[self.features], df[self.target])
-        return result
-
+        return result    
+    
     def test(self, df):
         self.eval_metric_test = self.score(df)
         msg = 'evaluated model %s with evaluation metric value %s' % (self.name, self.eval_metric_test)
