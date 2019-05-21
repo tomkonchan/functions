@@ -15,7 +15,6 @@ import urllib3
 import json
 import inspect
 import sys
-import gzip
 
 import pandas as pd
 import subprocess
@@ -45,7 +44,8 @@ except ImportError:
 
 class Database(object):
     '''
-    Use Database objects to establish database connectivity, manage database metadata and sessions, build queries and write DataFrames to tables.
+    Use Database objects to establish database connectivity, manage database metadata and sessions, build queries and
+    write DataFrames to tables.
     
     Parameters:
     -----------
@@ -122,7 +122,8 @@ class Database(object):
                 db2_creds['username'] = credentials['username']
                 self.credentials['db2'] = db2_creds
                 logger.warning(
-                    'Old style credentials still work just fine, but will be depreciated in the future. Check the usage section of the UI for the updated credentials dictionary')
+                    'Old style credentials still work just fine, but will be depreciated in the future. Check '
+                    'the usage section of the UI for the updated credentials dictionary')
                 self.credentials['as'] = credentials
         else:
             try:
@@ -150,7 +151,8 @@ class Database(object):
             self.credentials['config']['objectStorageEndpoint']
             self.credentials['config']['bos_runtime_bucket']
         except KeyError:
-            msg = 'Missing objectStorage credentials. Database object created, but it will not be able interact with object storage'
+            msg = 'Missing objectStorage credentials. Database object created, but it will not be able interact ' \
+                  'with object storage'
             logger.warning(msg)
 
         as_creds = credentials.get('iotp', None)
@@ -161,7 +163,7 @@ class Database(object):
         else:
             as_api_host = as_creds.get('asHost', None)
             as_api_key = as_creds.get('apiKey', None)
-            as_api_key = as_creds.get('apiToken', None)
+            as_api_token = as_creds.get('apiToken', None)
 
         try:
             if as_api_host is None:
@@ -174,7 +176,8 @@ class Database(object):
             as_api_host = None
             as_api_key = None
             as_api_token = None
-            msg = 'Unable to locate AS credentials or environment variable. db will not be able to connect to the AS API'
+            msg = 'Unable to locate AS credentials or environment variable. db will not be able to connect ' \
+                  'to the AS API'
             logger.warning(msg)
 
         if as_api_host is not None and as_api_host.startswith('https://'):
@@ -193,7 +196,8 @@ class Database(object):
                 'pool_size': 1
             }
 
-            # sqlite is not included included in the AS credentials. It is only intended to be used if db2 is not istalled.
+            # sqlite is not included included in the AS credentials. It is only intended to be used if db2 is
+            # not istalled.
             # There is a back door to for using it instead of db2 for local development only. 
             # It will be used only when explicitly added to the credentials as credentials['sqlite'] = filename
             try:
@@ -209,13 +213,14 @@ class Database(object):
                         connection_string += 'SECURITY=%s' % self.credentials['db2']['security']
                 except KeyError:
                     # look for environment variable for the ICS DB2
+                    msg = 'Function requires a database connection but one could not be established. Pass ' \
+                          'appropriate db_credentials or ensure that the DB_CONNECTION_STRING is set'
                     try:
-                        msg = 'Function requires a database connection but one could not be established. Pass appropriate db_credentials or ensure that the DB_CONNECTION_STRING is set'
                         connection_string = os.environ.get('DB_CONNECTION_STRING')
                     except KeyError:
                         raise ValueError(msg)
                     else:
-                        if not connection_string is None:
+                        if connection_string is not None:
                             if connection_string.endswith(';'):
                                 connection_string = connection_string[:-1]
                             ev = dict(item.split("=") for item in connection_string.split(";"))
@@ -235,7 +240,8 @@ class Database(object):
             else:
                 self.credentials['sqlite'] = connection_string
                 connection_kwargs = {}
-                msg = 'Using sqlite connection for local testing. Note sqlite can only be used for local testing. It is not a supported AS database.'
+                msg = 'Using sqlite connection for local testing. Note sqlite can only be used for local testing. ' \
+                      'It is not a supported AS database.'
                 logger.warning(msg)
                 self.write_chunk_size = 100
         else:
@@ -381,7 +387,7 @@ class Database(object):
         '''
         Commit the active session
         '''
-        if not self.session is None:
+        if self.session is not None:
             self.session.commit()
             self.session.close()
             self.session = None
@@ -420,12 +426,12 @@ class Database(object):
 
         self.start_session()
         if older_than_days is None:
-            result = self.connection.execute(table.delete())
+            self.connection.execute(table.delete())
             msg = 'deleted all data from table %s' % table_name
             logger.debug(msg)
         else:
             until_date = dt.datetime.utcnow() - dt.timedelta(days=older_than_days)
-            result = self.connection.execute(table.delete().where(table.c[timestamp] < until_date))
+            self.connection.execute(table.delete().where(table.c[timestamp] < until_date))
             msg = 'deleted data from table %s older than %s' % (table_name, until_date)
             logger.debug(msg)
         self.commit()
@@ -497,11 +503,9 @@ class Database(object):
                 if m['metricTableName'] == name:
                     metadata = m
                     break
-            msg = 'No entity called % in the cached metadata.' % name
-            raise ValueError(msg)
-
-        print(metadata)
-        raise
+            if metadata is None:
+                msg = 'No entity called %s in the cached metadata.' % name
+                raise ValueError(msg)
 
         timestamp = metadata['metricTimestampColumn']
         schema = metadata['schemaName']
@@ -559,7 +563,7 @@ class Database(object):
         others = []
 
         for c in self.get_column_names(table):
-            if not c in exclude_cols:
+            if c not in exclude_cols:
                 data_type = table.c[c].type
                 if isinstance(data_type, DOUBLE) or isinstance(data_type, Float):
                     metrics.append(c)
@@ -594,7 +598,7 @@ class Database(object):
         '''
         Make an api call to AS.
         
-        Warning: This is a low level API that closley maps to the AS Server API.
+        Warning: This is a low level API that closely maps to the AS Server API.
         The AS Server API changes regularly. This API will not shield you from
         these changes. Consult the iotfunctions wiki and view samples to understand
         the supported APIs for interacting with the AS Server.
@@ -610,7 +614,10 @@ class Database(object):
             GET, POST, DELETE, PUT
         payload : dict
             Dictionary will be encoded as JSON
-        
+        object_name_2 :
+
+        raise_error : bool
+            function throws exception in case of error
         '''
         if object_name is None:
             object_name = ''
@@ -622,52 +629,55 @@ class Database(object):
             raise ValueError(msg)
 
         base_url = 'http://%s/api' % (self.credentials['as']['host'])
-        self.url = {}
-        self.url[('allFunctions', 'GET')] = '/'.join(
+        url_catalog = {}
+        url_catalog[('allFunctions', 'GET')] = '/'.join(
             [base_url, 'catalog', 'v1', self.tenant_id, 'function?customFunctionsOnly=false'])
 
-        self.url[('constants', 'GET')] = '/'.join(
+        url_catalog[('constants', 'GET')] = '/'.join(
             [base_url, 'constants', 'v1', '%s?entityType=%s' % (self.tenant_id, object_name)])
-        self.url[('constants', 'PUT')] = '/'.join([base_url, 'constants', 'v1'])
-        self.url[('constants', 'POST')] = '/'.join([base_url, 'constants', 'v1'])
+        url_catalog[('constants', 'PUT')] = '/'.join([base_url, 'constants', 'v1'])
+        url_catalog[('constants', 'POST')] = '/'.join([base_url, 'constants', 'v1'])
 
-        self.url[('defaultConstants', 'GET')] = '/'.join([base_url, 'constants', 'v1', self.tenant_id])
-        self.url[('defaultConstants', 'POST')] = '/'.join([base_url, 'constants', 'v1', self.tenant_id])
-        self.url[('defaultConstants', 'PUT')] = '/'.join([base_url, 'constants', 'v1', self.tenant_id])
-        self.url[('defaultConstants', 'DELETE')] = '/'.join([base_url, 'constants', 'v1', self.tenant_id])
+        url_catalog[('defaultConstants', 'GET')] = '/'.join([base_url, 'constants', 'v1', self.tenant_id])
+        url_catalog[('defaultConstants', 'POST')] = '/'.join([base_url, 'constants', 'v1', self.tenant_id])
+        url_catalog[('defaultConstants', 'PUT')] = '/'.join([base_url, 'constants', 'v1', self.tenant_id])
+        url_catalog[('defaultConstants', 'DELETE')] = '/'.join([base_url, 'constants', 'v1', self.tenant_id])
 
-        self.url[('dataItem', 'PUT')] = '/'.join(
+        url_catalog[('dataItem', 'PUT')] = '/'.join(
             [base_url, 'kpi', 'v1', self.tenant_id, 'entityType', object_name, object_type, object_name_2])
 
-        self.url[('allEntityTypes', 'GET')] = '/'.join([base_url, 'meta', 'v1', self.tenant_id, 'entityType'])
-        self.url[('entityType', 'POST')] = '/'.join([base_url, 'meta', 'v1', self.tenant_id, object_type])
-        self.url[('entityType', 'GET')] = '/'.join([base_url, 'meta', 'v1', self.tenant_id, object_type, object_name])
+        url_catalog[('allEntityTypes', 'GET')] = '/'.join([base_url, 'meta', 'v1', self.tenant_id, 'entityType'])
+        url_catalog[('entityType', 'POST')] = '/'.join([base_url, 'meta', 'v1', self.tenant_id, object_type])
+        url_catalog[('entityType', 'GET')] = '/'.join([base_url, 'meta', 'v1', self.tenant_id, object_type,
+                                                       object_name])
 
-        self.url[('engineInput', 'GET')] = '/'.join(
+        url_catalog[('engineInput', 'GET')] = '/'.join(
             [base_url, 'kpi', 'v1', self.tenant_id, 'entityType', object_name, object_type])
 
-        self.url[('function', 'GET')] = '/'.join([base_url, 'catalog', 'v1', self.tenant_id, object_type, object_name])
-        self.url[('function', 'DELETE')] = '/'.join(
+        url_catalog[('function', 'GET')] = '/'.join([base_url, 'catalog', 'v1', self.tenant_id, object_type,
+                                                     object_name])
+        url_catalog[('function', 'DELETE')] = '/'.join(
             [base_url, 'catalog', 'v1', self.tenant_id, object_type, object_name])
-        self.url[('function', 'PUT')] = '/'.join([base_url, 'catalog', 'v1', self.tenant_id, object_type, object_name])
+        url_catalog[('function', 'PUT')] = '/'.join([base_url, 'catalog', 'v1', self.tenant_id, object_type,
+                                                     object_name])
 
-        self.url[('granularitySet', 'POST')] = '/'.join(
+        url_catalog[('granularitySet', 'POST')] = '/'.join(
             [base_url, 'granularity', 'v1', self.tenant_id, 'entityType', object_name, object_type])
-        self.url[('granularitySet', 'DELETE')] = '/'.join(
+        url_catalog[('granularitySet', 'DELETE')] = '/'.join(
             [base_url, 'granularity', 'v1', self.tenant_id, 'entityType', object_name, object_type, object_name_2])
-        self.url[('granularitySet', 'GET')] = '/'.join(
+        url_catalog[('granularitySet', 'GET')] = '/'.join(
             [base_url, 'granularity', 'v1', self.tenant_id, 'entityType', object_name, object_type])
 
-        self.url[('kpiFunctions', 'POST')] = '/'.join(
+        url_catalog[('kpiFunctions', 'POST')] = '/'.join(
             [base_url, 'kpi', 'v1', self.tenant_id, 'entityType', object_name, object_type, 'import'])
 
-        self.url[('kpiFunction', 'POST')] = '/'.join(
+        url_catalog[('kpiFunction', 'POST')] = '/'.join(
             [base_url, 'kpi', 'v1', self.tenant_id, 'entityType', object_name, object_type])
-        self.url[('kpiFunction', 'DELETE')] = '/'.join(
+        url_catalog[('kpiFunction', 'DELETE')] = '/'.join(
             [base_url, 'kpi', 'v1', self.tenant_id, 'entityType', object_name, object_type, object_name_2])
-        self.url[('kpiFunction', 'GET')] = '/'.join(
+        url_catalog[('kpiFunction', 'GET')] = '/'.join(
             [base_url, 'kpi', 'v1', self.tenant_id, 'entityType', object_name, object_type])
-        self.url[('kpiFunction', 'PUT')] = '/'.join(
+        url_catalog[('kpiFunction', 'PUT')] = '/'.join(
             [base_url, 'kpi', 'v1', self.tenant_id, 'entityType', object_name, object_type, object_name_2])
 
         encoded_payload = json.dumps(payload).encode('utf-8')
@@ -678,7 +688,7 @@ class Database(object):
             'Cache-Control': "no-cache",
         }
         try:
-            url = self.url[(object_type, request)]
+            url = url_catalog[(object_type, request)]
         except KeyError:
             raise ValueError(('This combination  of request_type (%s) and'
                               ' object_type (%s) is not supported by the'
@@ -691,10 +701,8 @@ class Database(object):
             logger.debug('http request successful. status %s', r.status)
         elif (request == 'POST' and
               object_type in ['kpiFunction', 'defaultConstants', 'constants'] and
-              (500 <= r.status <= 599)
-        ):
-            logger.debug(('htpp POST failed. attempting PUT. status:%s'),
-                         r.status)
+              (500 <= r.status <= 599)):
+            logger.debug('htpp POST failed. attempting PUT. status:%s', r.status)
             response = self.http_request(object_type=object_type,
                                          object_name=object_name,
                                          request='PUT',
@@ -819,7 +827,6 @@ class Database(object):
             if path is None:
                 msg = 'Cannot import %s it has an invalid module and path %s' % (name, path)
                 logger.warning(msg)
-                tobj = None
                 status = 'metadata_error'
             else:
                 (package, module, target) = (path[0], path[1], path[2])
@@ -830,12 +837,12 @@ class Database(object):
                 else:
                     url = None
                 try:
-                    tobj, status = self.import_target(package=package,
-                                                      module=module,
-                                                      target=target,
-                                                      url=url)
+                    dummy, status = self.import_target(package=package,
+                                                       module=module,
+                                                       target=target,
+                                                       url=url)
                 except Exception as e:
-                    msg = 'unkown error when importing: %s' % name
+                    msg = 'unknown error when importing: %s' % name
                     logger.exception(msg)
                     raise e
             try:
@@ -881,11 +888,11 @@ class Database(object):
 
     def subquery_join(self, left_query, right_query, *args, **kwargs):
         '''
-        Perform an equijoin between two sql alchemy query objects, filtering the left query by the keys in the right query
-        args are the names of the keys to join on, e.g 'deviceid', 'timestamp'. 
-        Use string args for joins on common names. Use tuples like ('timestamp','evt_timestamp') for joins on different column names.
-        By default the join acts as a filter. It does not return columns from the right query. To return columns from the right
-        query specify **kwargs as a dict containing column names and alais names.
+        Perform an equijoin between two sql alchemy query objects, filtering the left query by the keys in the
+        right query args are the names of the keys to join on, e.g 'deviceid', 'timestamp'.
+        Use string args for joins on common names. Use tuples like ('timestamp','evt_timestamp') for joins on
+        different column names. By default the join acts as a filter. It does not return columns from the right query.
+        To return columns from the right query specify **kwargs as a dict containing column names and alais names.
         '''
         left_query = left_query.subquery('a')
         right_query = right_query.subquery('b')
@@ -994,14 +1001,14 @@ class Database(object):
                               entities=entities,
                               dimension=dimension)
         df = pd.read_sql(sql=q.statement, con=self.connection, parse_dates=parse_dates, columns=columns)
-        return (df)
+        return df
 
     def read_sql(self, sql, parse_dates=None, columns=None):
         '''
         Read whole table and return as dataframe
         '''
         df = pd.read_sql(sql, con=self.connection, parse_dates=parse_dates, columns=columns)
-        return (df)
+        return df
 
     def read_query(self, query, parse_dates=None, columns=None):
         '''
@@ -1014,7 +1021,7 @@ class Database(object):
             pass
 
         df = pd.read_sql(query, con=self.connection, parse_dates=parse_dates, columns=columns)
-        return (df)
+        return df
 
     def read_agg(self, table_name, schema, agg_dict,
                  agg_outputs=None,
@@ -1167,7 +1174,8 @@ class Database(object):
 
             if module == '__main__':
                 raise RuntimeError(
-                    'The function that you are attempting to register is not located in a package. It is located in __main__. Relocate it to an appropriate package module.')
+                    'The function that you are attempting to register is not located in a package. It is located '
+                    'in __main__. Relocate it to an appropriate package module.')
 
             module_and_target = '%s.%s' % (module, name)
             exec_str = 'from %s import %s as import_test' % (module, name)
@@ -1191,7 +1199,8 @@ class Database(object):
                 (metadata_input, metadata_output) = f.build_ui()
                 (input_list, output_list) = f._transform_metadata(metadata_input, metadata_output)
             except (AttributeError, NotImplementedError):
-                msg = 'Function %s has no build_ui method. It cannot be registered this way. Register using function_instance.register()' % name
+                msg = 'Function %s has no build_ui method. It cannot be registered this way. Register using ' \
+                      'function_instance.register()' % name
                 raise NotImplementedError(msg)
             payload = {
                 'name': name,
@@ -1278,12 +1287,13 @@ class Database(object):
               dimension=None
               ):
         '''
-        Build a sqlalchemy query object for a table. You can further manipulate the query object using standard sqlalchemcy operations to do things like filter and join.
+        Build a sqlalchemy query object for a table. You can further manipulate the query object using standard
+        sqlalchemcy operations to do things like filter and join.
         
         Parameters
         ----------
         table_name : str or Table object
-        columns_names: list of strs
+        column_names: list of strs
             Projection list
         timestamp_col: str
             Name of timestamp column in the table. Required for time filters.
@@ -1334,17 +1344,17 @@ class Database(object):
         if dim is not None:
             query = query.join(dim, dim.c.deviceid == table.c.deviceid)
 
-        if not start_ts is None:
+        if start_ts is not None:
             if timestamp_col is None:
                 msg = 'No timestamp_col provided to query. Must provide a timestamp column if you have a date filter'
                 raise ValueError(msg)
             query = query.filter(table.c[timestamp_col] >= start_ts)
-        if not end_ts is None:
+        if end_ts is not None:
             if timestamp_col is None:
                 msg = 'No timestamp_col provided to query. Must provide a timestamp column if you have a date filter'
                 raise ValueError(msg)
             query = query.filter(table.c[timestamp_col] < end_ts)
-        if not entities is None:
+        if entities is not None:
             query = query.filter(table.c.deviceid.in_(entities))
 
         return (query, table)
@@ -1412,7 +1422,8 @@ class Database(object):
                     args.append(self._aggregate_item(table=table, column_name=col, aggregate=agg, alias_column=output,
                                                      dimension_table=dim, timestamp_col=timestamp))
             else:
-                msg = 'Aggregate dictionary is not in the correct form. Supply a single aggregate function as a string or a list of strings.'
+                msg = 'Aggregate dictionary is not in the correct form. Supply a single aggregate function as a ' \
+                      'string or a list of strings.'
                 raise ValueError(msg)
             metric_filter.append(self._is_not_null(table=table, dimension_table=dim, column=col))
         # assemble group by
@@ -1562,7 +1573,8 @@ class Database(object):
 
         if pandas_aggregate:
             raise ValueError(
-                'Attempting to db time aggregation on a query cannot be pushed to the database. Perform the time aggregation in Pandas.')
+                'Attempting to db time aggregation on a query cannot be pushed to the database. Perform the '
+                'time aggregation in Pandas.')
 
         if time_agg == 'first':
             time_agg_dict = {timestamp: "min"}
@@ -1623,18 +1635,14 @@ class Database(object):
         payload = []
 
         for f in constant_names:
-            payload.append({
-                'name': f,
-                'entityType': None
-            }
-            )
+            payload.append({'name': f, 'entityType': None})
 
-        r = self.http_request(object_type='defaultConstants', object_name=f, request='DELETE', payload=payload)
-        try:
-            msg = 'Constants deletion status: %s' % (r.data.decode('utf-8'))
-        except AttributeError:
-            msg = 'Constants deletion status: %s' % r
-        logger.info(msg)
+            r = self.http_request(object_type='defaultConstants', object_name=f, request='DELETE', payload=payload)
+            try:
+                msg = 'Constants deletion status: %s' % (r.data.decode('utf-8'))
+            except AttributeError:
+                msg = 'Constants deletion status: %s' % r
+            logger.info(msg)
 
     def write_frame(self, df,
                     table_name,
@@ -1648,12 +1656,12 @@ class Database(object):
         
         Parameters
         ---------------------
-        db_credentials: dict (optional)
-            db2 database credentials. If not provided, will look for environment variable
+        df: data frame
+            data frame that will be written to table
         table_name: str 
             table name to write to.
         version_db_writes : boolean (optional)
-            Add seprate version_date column to table. If not provided, will use default for instance / class
+            Add separate version_date column to table. If not provided, will use default for instance / class
         if_exists : str (optional)
             What to do if table already exists. If not provided, will use default for instance / class
         chunksize : int
@@ -1682,7 +1690,8 @@ class Database(object):
             df['version_date'] = dt.datetime.utcnow()
         if table_name is None:
             raise ValueError(
-                'Function attempted to write data to a table. A name was not supplied. Specify an instance variable for out_table_name. Optionally include an out_table_prefix too')
+                'Function attempted to write data to a table. A name was not supplied. Specify an instance variable '
+                'for out_table_name. Optionally include an out_table_prefix too')
         dtypes = {}
         # replace default mappings to clobs and booleans
         for c in list(df.columns):
@@ -1690,7 +1699,6 @@ class Database(object):
                 dtypes[c] = String(255)
             elif is_bool_dtype(df[c]):
                 dtypes[c] = SmallInteger()
-        table_exists = False
         cols = None
         if if_exists == 'append':
             # check table exists
@@ -1699,12 +1707,12 @@ class Database(object):
             except KeyError:
                 pass
             else:
-                table_exists = True
                 cols = [column.key for column in table.columns]
                 extra_cols = set([x for x in df.columns if x != 'index']) - set(cols)
                 if len(extra_cols) > 0:
                     logger.warning(
-                        'Dataframe includes column/s %s that are not present in the table. They will be ignored.' % extra_cols)
+                        'Dataframe includes column/s %s that are not present in the table. They will be ignored.' %
+                        extra_cols)
                 try:
                     df = df[cols]
                 except KeyError:
@@ -1743,18 +1751,24 @@ class BaseTable(object):
             except KeyError:
                 pass
         kw['extend_existing'] = True
+
+        self.schema = None
         try:
-            kwschema = kw['schema']
+            self.schema = kw['schema']
+            if self.schema is None:
+                msg = "Schema passed in keyword 'schema' as None, using default schema"
+                logger.debug(msg)
         except KeyError:
             try:
-                kw['schema'] = kw['_db_schema']
+                self.schema = kw['_db_schema']
+                if self.schema is None:
+                    msg = "Schema passed in keyword '_db_schema' as None, using default schema"
+                    logger.debug(msg)
             except KeyError:
                 msg = 'No schema specified as **kw, using default for table %s' % self.name
                 logger.warning(msg)
-        else:
-            if kwschema is None:
-                msg = 'Schema passed as None, using default schema'
-                logger.debug(msg)
+
+
         self.table = Table(self.name, self.database.metadata, *args, **kw)
         self.id_col = Column(self._entity_id, String(50))
 
@@ -1794,8 +1808,8 @@ class BaseTable(object):
         try:
             df = df[cols]
         except KeyError:
-            msg = 'Dataframe does not have required columns %s. It has columns: %s and index: %s' % (
-            cols, df.columns, df.index.names)
+            msg = 'Dataframe does not have required columns %s. It has columns: %s and index: %s' % \
+                  (cols, df.columns, df.index.names)
             raise KeyError(msg)
         self.database.start_session()
         try:
@@ -1835,10 +1849,11 @@ class SystemLogTable(BaseTable):
 
 class ActivityTable(BaseTable):
     """
-    An activity table is a special class of table that iotfunctions understands to contain data containing activities performed using or on an entity.
-    The table contains a device id, start date and end date of the activity and an activity code to indicate what type of activity was performed.
-    The table can have any number of additional Column objects supplied as arguments.
-    Also supply a keyword argument containing "activities" a list of activity codes contained in this table
+    An activity table is a special class of table that iotfunctions understands to contain data containing activities
+    performed using or on an entity. The table contains a device id, start date and end date of the activity and an
+    activity code to indicate what type of activity was performed. The table can have any number of additional Column
+    objects supplied as arguments. Also supply a keyword argument containing "activities" a list of activity codes
+    contained in this table
     """
 
     def __init__(self, name, database, *args, **kw):
@@ -1864,7 +1879,8 @@ class Dimension(BaseTable):
 
 class ResourceCalendarTable(BaseTable):
     """
-    A resource calendar table is a special class of table that iotfunctions understands to contain data that can be used to understand what resource/s were assigned to an entity
+    A resource calendar table is a special class of table that iotfunctions understands to contain data that can be
+    used to understand what resource/s were assigned to an entity
     The table contains a device id, start date and end date and the resource_id. 
     Create a separte table for each different type of resource, e.g. operator, owner , company
     The table can have any number of additional Column objects supplied as arguments.

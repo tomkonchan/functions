@@ -3,38 +3,38 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def quotingColumnName(schemaName):
-    return quotingTableName(schemaName)
+def quoting_column_name(schema_name):
+    return quoting_table_name(schema_name)
 
 
-def quotingSchemaName(schemaName):
-    return quotingTableName(schemaName)
+def quoting_schema_name(schema_name):
+    return quoting_table_name(schema_name)
 
 
-def quotingTableName(tableName):
-    quotedTableName = 'NULL'
+def quoting_table_name(table_name):
+    quoted_table_name = 'NULL'
     quote = '\"'
-    twoQuotes = '\"\"'
+    two_quotes = '\"\"'
 
-    if tableName is not None:
-        tableName = tableName.upper()
+    if table_name is not None:
+        table_name = table_name.upper()
         # Quote string and escape all quotes in string by an additional quote 
-        quotedTableName = quote + tableName.replace(quote, twoQuotes) + quote
+        quoted_table_name = quote + table_name.replace(quote, two_quotes) + quote
 
-    return quotedTableName
+    return quoted_table_name
 
 
-def quotingSqlString(sqlValue):
-    preparedValue = 'NULL'
+def quoting_sql_string(sql_value):
+    prepared_value = 'NULL'
     quote = '\''
-    twoQuotes = '\'\''
+    two_quotes = '\'\''
 
-    if sqlValue is not None:
-        if isinstance(sqlValue, str):
+    if sql_value is not None:
+        if isinstance(sql_value, str):
             # Quote string and escape all quotes in string by an additional quote 
-            preparedValue = quote + sqlValue.replace(quote, twoQuotes) + quote
+            prepared_value = quote + sql_value.replace(quote, two_quotes) + quote
         else:
             # sqlValue is no string; therefore just return it as is
-            preparedValue = sqlValue
+            prepared_value = sql_value
 
-    return preparedValue
+    return prepared_value

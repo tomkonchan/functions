@@ -15,11 +15,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import (Table, Column, Integer, SmallInteger, String, DateTime)
 
-from pandas.api.types import (is_string_dtype, is_numeric_dtype, is_bool_dtype,
-                              is_datetime64_any_dtype, is_dict_like)
-
 from iotfunctions.db import SystemLogTable
-from iotfunctions.metadata import EntityType
 from iotfunctions.automation import TimeSeriesGenerator
 from iotfunctions.base import (BaseTransformer, BaseDataSource, BaseEvent, BaseFilter,
                                BaseAggregator, BaseDatabaseLookup, BaseDBActivityMerge,
@@ -50,7 +46,7 @@ class CompanyFilter(BaseFilter):
         Get list of columns from lookup table, Create lookup table from self.data if it doesn't exist.
         """
         if arg == 'company':
-            return (['AMCE', 'ABC', 'JDI'])
+            return ['AMCE', 'ABC', 'JDI']
 
     def filter(self, df):
         df = df[df[self.company_code] == self.company]
@@ -293,11 +289,11 @@ class MergeSampleTimeSeries(BaseDataSource):
 
         self.load_sample_data()
         (query, table) = self._entity_type.db.query(self.source_table_name, schema=self._entity_type._db_schema)
-        if not start_ts is None:
+        if start_ts is not None:
             query = query.filter(table.c[self._entity_type._timestamp] >= start_ts)
-        if not end_ts is None:
+        if end_ts is not None:
             query = query.filter(table.c[self._entity_type._timestamp] < end_ts)
-        if not entities is None:
+        if entities is not None:
             query = query.filter(table.c.deviceid.in_(entities))
         df = pd.read_sql(query.statement,
                          con=self._entity_type.db.connection,
@@ -633,7 +629,8 @@ class SampleActivityMerge(BaseDBActivityMerge):
         self.activities_metadata['widget_maintenance_activity'] = ['PM', 'UM']
         self.activities_metadata['widget_transfer_activity'] = ['DT', 'IT']
         self.activities_custom_query_metadata = {}
-        # self.activities_custom_query_metadata['CS'] = 'select effective_date as start_date, end_date, asset_id as deviceid from some_custom_activity_table'
+        # self.activities_custom_query_metadata['CS'] = 'select effective_date as start_date, end_date, asset_id as
+        # deviceid from some_custom_activity_table'
         et = self.get_entity_type()
         et.add_slowly_changing_dimension(scd_property='status', table_name='widgets_dec12b_scd_status')
         et.add_slowly_changing_dimension(scd_property='operator', table_name='widgets_dec12b_scd_operator')
@@ -652,7 +649,8 @@ class SampleActivityDuration(BaseDBActivityMerge):
         self.activities_metadata['widget_maintenance_activity'] = ['PM', 'UM']
         self.activities_metadata['widget_transfer_activity'] = ['DT', 'IT']
         self.activities_custom_query_metadata = {}
-        # self.activities_custom_query_metadata['CS'] = 'select effective_date as start_date, end_date, asset_id as deviceid from some_custom_activity_table'
+        # self.activities_custom_query_metadata['CS'] = 'select effective_date as start_date, end_date, asset_id as
+        # deviceid from some_custom_activity_table'
         # registration
         self.constants = ['input_activities']
         self.outputs = ['activity_duration', 'shift_day', 'shift_id', 'shift_start_date', 'shift_end_date']
@@ -671,7 +669,7 @@ class StatusFilter(BaseFilter):
 
     def get_item_values(self, arg):
         if arg == 'include_only':
-            return (['active', 'inactive'])
+            return ['active', 'inactive']
         else:
             return None
 
@@ -683,17 +681,17 @@ class StatusFilter(BaseFilter):
     def build_ui(cls):
         # define arguments that behave as function inputs
         inputs = []
-        inputs.append(UISingleItem(name='status_input_item',
+        inputs.append(ui.UISingleItem(name='status_input_item',
                                    datatype=None,
                                    description='Item name to use for status'
                                    ))
-        inputs.append(UISingle(name='include_only',
+        inputs.append(ui.UISingle(name='include_only',
                                datatype=str,
                                description='Filter to include only rows with a status of this'
                                ))
         # define arguments that behave as function outputs
         outputs = []
-        outputs.append(UIFunctionOutSingle(name='output_item',
+        outputs.append(ui.UIFunctionOutSingle(name='output_item',
                                            datatype=bool,
                                            description='Item that contains the execution status of this function'
                                            ))

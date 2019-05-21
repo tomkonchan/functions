@@ -163,13 +163,13 @@ def compare_dataframes(dfl, dfr, cols=None):
         differences += abs(len(dfl.index) - len(dfr.index))
     missing_l = set(cols) - set(dfl.columns)
     if len(missing_l) != 0:
-        msg = 'dfl is missing columns:' % (missing_l)
+        msg = 'dfl is missing columns: %s' % missing_l
         trace = trace + msg
         cols = [x for x in cols if x not in missing_l]
         differences += len(missing_l) * len(dfl.index)
     missing_r = set(cols) - set(dfr.columns)
     if len(missing_r) != 0:
-        msg = 'dfr is missing columns: %s' % (missing_r)
+        msg = 'dfr is missing columns: %s' % missing_r
         trace = trace + msg
         cols = [x for x in cols if x not in missing_r]
         differences += len(missing_r) * len(dfr.index)
@@ -233,7 +233,6 @@ class CosClient:
         datestamp = time.strftime('%Y%m%d')
 
         url = urlparse(self._cos_endpoint)
-        scheme = url.scheme
         host = url.netloc
 
         payload_hash = hashlib.sha256(str.encode(payload) if isinstance(payload, str) else payload).hexdigest()
@@ -254,7 +253,8 @@ class CosClient:
         for header in sorted(all_headers.keys()):
             standardized_headers += '%s:%s\n' % (header, all_headers[header])
         signed_headers = ';'.join(sorted(all_headers.keys()))
-        # standardized_headers = 'host:' + host + '\n' + 'x-amz-content-sha256:' + payload_hash + '\n' + 'x-amz-date:' + timestamp + '\n'
+        # standardized_headers = 'host:' + host + '\n' + 'x-amz-content-sha256:' + payload_hash + '\n' +
+        # 'x-amz-date:' + timestamp + '\n'
         # signed_headers = 'host;x-amz-content-sha256;x-amz-date'
 
         standardized_request = (http_method + '\n' +
@@ -279,7 +279,7 @@ class CosClient:
         # generate the signature
         signature_key = self._create_signature_key(self._cod_hmac_secret_access_key, datestamp, self._cos_region, 's3')
         signature = hmac.new(signature_key,
-                             (sts).encode('utf-8'),
+                             sts.encode('utf-8'),
                              hashlib.sha256).hexdigest()
 
         # logging.debug('signature=\n%s' % signature)
@@ -318,8 +318,8 @@ class CosClient:
 
         if resp.status_code != requests.codes.ok and not (
                 resp.status_code == requests.codes.no_content and http_method == 'DELETE'):
-            logger.warning('error cos_api_request: request_url=%s, http_method=%s, status_code=%s, response_text=%s' % (
-            request_url, http_method, str(resp.status_code), str(resp.text)))
+            logger.warning('error cos_api_request: request_url=%s, http_method=%s, status_code=%s, response_text=%s' %
+                           (request_url, http_method, str(resp.status_code), str(resp.text)))
             return None
 
         return resp.content if binary else resp.text
@@ -402,7 +402,6 @@ def cosLoad(bucket, filename, credentials):
         os.close(fhandle)
         transfer = getCosTransferAgent(credentials)
         transfer.download_file(bucket, filename, fname)
-        answer = None
         with open(fname, 'rb') as file_obj:
             answer = pickle.load(file_obj)
         os.unlink(fname)
@@ -433,7 +432,8 @@ def getCosTransferAgent(credentials):
         return S3Transfer(cos)
     else:
         raise ValueError(
-            'Attempting to use IAM credentials to communicate with COS. IBMBOTO is not installed. You make use HMAC credentials and the CosClient instead.')
+            'Attempting to use IAM credentials to communicate with COS. IBMBOTO is not installed. '
+            'You make use HMAC credentials and the CosClient instead.')
 
 
 def infer_data_items(expressions):
@@ -445,13 +445,13 @@ def infer_data_items(expressions):
     '''
     if not isinstance(expressions, list):
         expressions = [expressions]
-    regex1 = "df\[\'(.+?)\'\]"
-    regex2 = 'df\[\"(.+?)\"\]'
+    regex1 = "df[\'(.+?)\']"
+    regex2 = 'df[\"(.+?)\"]'
     data_items = set()
     for e in expressions:
         data_items |= set(re.findall(regex1, e))
         data_items |= set(re.findall(regex2, e))
-    return (data_items)
+    return data_items
 
 
 def get_fn_expression_args(function_metadata, kpi_metadata):
@@ -600,8 +600,8 @@ class MemoryOptimizer:
     def getColumnsForCategorization(self, df, threshold=0.5):
         '''
         It generates a list of columns that are elegible to be categorized.
-        The column name is printed if the number of unique values is proportionally greater than 50% of the total number of rows.
-        Threshold is customized.
+        The column name is printed if the number of unique values is proportionally greater than 50% of the
+        total number of rows. Threshold is customized.
         '''
 
         df_new = df.select_dtypes(include=['object']).copy()
@@ -653,14 +653,14 @@ class MemoryOptimizer:
 def freq_to_timedelta(freq):
     '''
     The pandas to_timedelta does not handle the full set of
-    set of pandas frequency abreviations. Convert to supported 
-    abreviation and the use to_timedelta.
+    set of pandas frequency abbreviations. Convert to supported
+    abbreviation and the use to_timedelta.
     '''
     try:
         freq = freq.replace('T', 'min')
     except AttributeError:
         pass
-    return (pd.to_timedelta(freq))
+    return pd.to_timedelta(freq)
 
 
 class StageException(Exception):

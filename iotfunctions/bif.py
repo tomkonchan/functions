@@ -232,7 +232,8 @@ class AlertExpression(BaseEvent):
                                   ))
         inputs.append(UIExpression(name='expression',
                                    datatype=str,
-                                   description="Define alert expression using pandas systax. Example: df['inlet_temperature']>50"
+                                   description="Define alert expression using pandas systax. "
+                                               "Example: df['inlet_temperature']>50"
                                    ))
         # define arguments that behave as function outputs
         outputs = []
@@ -799,7 +800,8 @@ class DatabaseLookup(BaseDatabaseLookup):
 
     def get_item_values(self, arg):
         raise NotImplementedError(
-            'No items values available for generic database lookup function. Implement a specific one for each table to define item values. ')
+            'No items values available for generic database lookup function. Implement a specific one '
+            'for each table to define item values. ')
 
 
 class DeleteInputData(BasePreload):
@@ -1078,9 +1080,8 @@ class PythonExpression(BaseTransformer):
         # define arguments that behave as function inputs
         inputs = []
         inputs.append(UIExpression(name='expression',
-                                   description="Define alert expression using pandas systax. Example: df['inlet_temperature']>50"
-                                   )
-                      )
+                                   description="Define alert expression using pandas syntax. "
+                                               "Example: df['inlet_temperature']>50"))
         # define arguments that behave as function outputs
         outputs = []
         outputs.append(UIFunctionOutSingle(name='output_name',
@@ -1133,15 +1134,18 @@ class GetEntityData(BaseDataSource):
         inputs = []
         inputs.append(UISingle(name='source_entity_type_name',
                                datatype=str,
-                               description="Enter the name of the entity type that you would like to retrieve data from")
+                               description="Enter the name of the entity type that you would like to "
+                                           "retrieve data from")
                       )
         inputs.append(UISingle(name='key_map_column',
                                datatype=str,
-                               description="Enter the name of the column on the source entity type that represents the map to the device id of this entity type")
+                               description="Enter the name of the column on the source entity type that represents "
+                                           "the map to the device id of this entity type")
                       )
         inputs.append(UIMulti(name='input_items',
                               datatype=str,
-                              description="Comma separated list of data item names to retrieve from the source entity type",
+                              description="Comma separated list of data item names to retrieve from the "
+                                          "source entity type",
                               output_item='output_items',
                               is_output_datatype_derived=True)
                       )
@@ -1180,7 +1184,8 @@ class EntityId(BaseTransformer):
         inputs.append(UIMultiItem(name='data_items',
                                   datatype=None,
                                   required=False,
-                                  description='Choose one or more data items. If data items are defined, entity id will only be shown if these data items are not null'
+                                  description='Choose one or more data items. If data items are defined, '
+                                              'entity id will only be shown if these data items are not null'
                                   ))
         # define arguments that behave as function outputs
         outputs = []
@@ -1218,7 +1223,8 @@ class IfThenElse(BaseTransformer):
         inputs = []
         inputs.append(UIExpression(name='conditional_expression',
                                    datatype=str,
-                                   description="expression that returns a True/False value, eg. if df['temp']>50 then df['temp'] else None"
+                                   description="expression that returns a True/False value, "
+                                               "eg. if df['temp']>50 then df['temp'] else None"
                                    ))
         inputs.append(UIExpression(name='true_expression',
                                    datatype=str,
@@ -1442,7 +1448,8 @@ class RaiseError(BaseTransformer):
     def execute(self, df):
         msg = self.log_df_info(df, 'Prior to raising error')
         self.trace_append(msg)
-        msg = 'The calculation was halted deliberately by the IoTRaiseError function. Remove the IoTRaiseError function or disable "abort_execution" in the function configuration. '
+        msg = 'The calculation was halted deliberately by the IoTRaiseError function. Remove the IoTRaiseError ' \
+              'function or disable "abort_execution" in the function configuration. '
         if self.abort_execution:
             raise RuntimeError(msg)
 
@@ -2041,7 +2048,8 @@ class IoTCalcSettings(BaseMetadataProvider):
 
     def _apply_pre_agg_metadata(self, aggregate, items, outputs):
         '''
-        convert UI inputs into a pandas aggregate dictioonary and a separate dictionary containing names of aggregate items
+        convert UI inputs into a pandas aggregate dictioonary and a separate dictionary containing
+        names of aggregate items
         '''
         if items is not None:
             if outputs is None:
@@ -2054,7 +2062,8 @@ class IoTCalcSettings(BaseMetadataProvider):
                     self._pre_agg_rules[item] = [aggregate]
                     self._pre_agg_outputs[item] = [outputs[i]]
                 except IndexError:
-                    msg = 'Metadata for aggregate %s is not defined correctly. Outputs array should match length of items array.' % aggregate
+                    msg = 'Metadata for aggregate %s is not defined correctly. Outputs array should match ' \
+                          'length of items array.' % aggregate
                     raise ValueError(msg)
 
         return None
@@ -2079,7 +2088,8 @@ class IoTCalcSettings(BaseMetadataProvider):
             name='pre_aggregate_time_grain',
             datatype=str,
             required=False,
-            description='By default, data is retrieved at the input grain. Use this setting to preaggregate data and reduce the volumne of data retrieved',
+            description='By default, data is retrieved at the input grain. Use this setting to preaggregate '
+                        'data and reduce the volumne of data retrieved',
             values=['1min', '5min', '15min', '30min', '1H', '2H', '4H', '8H', '12H', 'day', 'week', 'month', 'year']
         ))
         inputs.append(UIMultiItem(
@@ -2191,7 +2201,8 @@ class IoTCosFunction(BaseTransformer):
         inputs.append(UIMultiItem('input_items'))
         inputs.append(UISingle(name='function_name',
                                datatype=float,
-                               description='Name of function object. Function object must be serialized to COS before you can use it'
+                               description='Name of function object. Function object must be serialized to '
+                                           'COS before you can use it'
                                )
                       )
         inputs.append(UISingle(name='parameters',

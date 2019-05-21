@@ -468,7 +468,7 @@ class BaseFunction(object):
             result = datatype.lower()
         return result
 
-    def _getJsonSchema(self, column_metadata, datatype, min_items, arg, is_array, is_output, is_constant):
+    def _getJsonSchema(self, column_metadata, datatype, min_items, arg, is_array, is_constant):
 
         # json schema may have been explicitly defined
         try:
@@ -491,10 +491,10 @@ class BaseFunction(object):
                     column_metadata['jsonSchema']["items"] = {"type": item_type}
                 except KeyError:
                     pass
-                msg = 'Argument %s is has no explicit json schema defined for it, built one for %s items' % (
-                arg, item_type)
+                msg = 'Argument %s is has no explicit json schema defined for it, built one for %s items' % \
+                      (arg, item_type)
             else:
-                msg = 'Non array arg %s - no json schema required' % (arg)
+                msg = 'Non array arg %s - no json schema required' % arg
             logger.debug(msg)
         else:
             msg = 'Argument %s is has explicit json schema defined for it %s' % (arg, self.itemJsonSchema[arg])
@@ -533,7 +533,7 @@ class BaseFunction(object):
         retrieved when executing a KPI pipeline. By default only items that
         are explicly referenced in function inputs are included.
         '''
-        return (set())
+        return set()
 
     def get_item_values(self, arg):
         """
@@ -597,7 +597,6 @@ class BaseFunction(object):
                     'to ensure that it returns a dataframe with output columns that are named differently from the '
                     'input columns')
         else:
-            tf = None
             raise NotImplementedError(
                 'Must supply a test dataframe for function registration. Explict metadata definition not suported')
 
@@ -654,7 +653,9 @@ class BaseFunction(object):
                 argtype = self._infer_type(arg_value)
             msg = 'Evaluating %s argument %s. Array: %s' % (argtype, a, is_array)
             logger.debug(msg)
-            # check if parameter has been modeled explictly
+            # check if parameter has been modeled explicitly
+            auto_desc = None
+            datatype = None
             if a in constants:
                 datatype = self._infer_type(arg_value, df=None)
                 column_metadata['dataType'] = datatype
@@ -669,7 +670,7 @@ class BaseFunction(object):
                 datatype = self._infer_type(arg_value, df=tf)
                 auto_desc = 'Provide a new data item name for the function output'
                 is_added = True
-                msg = 'Argument %s was explicitlty defined as output with datatype %s' % (a, datatype)
+                msg = 'Argument %s was explicitly defined as output with datatype %s' % (a, datatype)
                 logger.debug(msg)
                 if is_array:
                     array_outputs.append((a, len(arg_value)))
@@ -681,7 +682,7 @@ class BaseFunction(object):
                 auto_desc = 'Choose data item/s to be used as function inputs'
                 column_metadata['required'] = required
                 is_added = True
-                msg = 'Argument %s was explicitlty defined as a data item input' % (a)
+                msg = 'Argument %s was explicitly defined as a data item input' % a
                 logger.debug(msg)
             # if argument is a number, date or dict it must be a constant
             elif argtype in ['NUMBER', 'JSON', 'BOOLEAN', 'TIMESTAMP']:
@@ -726,8 +727,8 @@ class BaseFunction(object):
                     array_inputs.append((a, len(arg_value)))
                     is_added = True
                     column_metadata['required'] = required
-                    msg = 'Array argument %s exists in the test input dataframe so it is a data item of type %s' % (
-                    a, datatype)
+                    msg = 'Array argument %s exists in the test input dataframe so it is a data item of type %s' % \
+                          (a, datatype)
                     logger.debug(msg)
                 elif all(elem in test_outputs for elem in arg_value):
                     is_output = True
@@ -736,7 +737,7 @@ class BaseFunction(object):
                     auto_desc = 'Provide a new data item name for the function output'
                     array_outputs.append((a, len(arg_value)))
                     is_added = True
-                    msg = 'Array argument %s exists in the test output dataframe so it is a data item' % (a)
+                    msg = 'Array argument %s exists in the test output dataframe so it is a data item' % a
                     logger.debug(msg)
                     # if parameter was not explicitly modelled and does not exist in the input and output dataframes
             # it must be a constant
@@ -774,7 +775,6 @@ class BaseFunction(object):
                                                   min_items=min_items,
                                                   arg=a,
                                                   is_array=is_array,
-                                                  is_output=is_output,
                                                   is_constant=is_constant)
             # constants may have explict values
             values = None
@@ -803,14 +803,14 @@ class BaseFunction(object):
                     column_metadata['values'] = values
                 logger.debug(msg)
 
-                # array outputs are special. They inherit their datatype from an input array
-        # that could be explicity defined, or use last array_input
+        # array outputs are special. They inherit their datatype from an input array
+        # that could be explicitly defined, or use last array_input
         for (array, length) in array_outputs:
 
             try:
                 array_source = self.itemArraySource[array]
-                msg = 'Cardinality and datatype of array output %s were explicly set to be driven from %s' % (
-                array, array_source)
+                msg = 'Cardinality and datatype of array output %s were explicitly set to be driven from %s' % \
+                      (array, array_source)
                 logger.debug(msg)
             except KeyError:
                 array_source = self._infer_array_source(candidate_inputs=array_inputs,
@@ -830,7 +830,7 @@ class BaseFunction(object):
 
                 del metadata_outputs[array]['dataType']
                 msg = 'Array argument %s is driven by %s so the cardinality and datatype are set from the source' % \
-                      (a, array_source)
+                      (array, array_source)
                 logger.debug(msg)
         return (metadata_inputs, metadata_outputs)
 
@@ -1080,27 +1080,26 @@ class BaseFunction(object):
     @classmethod
     def _standard_item_descriptions(cls):
 
-        itemDescriptions = {}
+        item_descriptions = {}
 
-        itemDescriptions['bucket'] = 'Name of the COS bucket used for storage of data or serialized objects'
-        itemDescriptions['cos_credentials'] = 'External COS credentials'
-        itemDescriptions['db_credentials'] = 'Db2 credentials'
-        itemDescriptions[
-            'expression'] = 'Expression involving data items. Refer to data items using ${item_name} or ' \
-                            'using pandas syntax df["item_name"]'
-        itemDescriptions['function_name'] = 'Name of python function to be called.'
-        itemDescriptions['input_items'] = 'List of input items required by the function.'
-        itemDescriptions['input_item'] = 'Single input required by the function.'
-        itemDescriptions['lookup_key'] = 'Data item/s to use as key/s in a lookup operation'
-        itemDescriptions['lookup_keys'] = 'Data item/s to use as key/s in a lookup operation'
-        itemDescriptions['lookup_items'] = 'Columns from a lookup to include as new items'
-        itemDescriptions['lower_threshold'] = 'Lower threshold value for alert'
-        itemDescriptions['output_alert'] = 'Item name for alert produced by function'
-        itemDescriptions['output_item'] = 'Item name for output produced by function'
-        itemDescriptions['output_items'] = 'Item names for outputs produced by function'
-        itemDescriptions['upper_threshold'] = 'Upper threshold value for alert'
+        item_descriptions['bucket'] = 'Name of the COS bucket used for storage of data or serialized objects'
+        item_descriptions['cos_credentials'] = 'External COS credentials'
+        item_descriptions['db_credentials'] = 'Db2 credentials'
+        item_descriptions['expression'] = 'Expression involving data items. Refer to data items using ${item_name} ' \
+                                          'or using pandas syntax df["item_name"]'
+        item_descriptions['function_name'] = 'Name of python function to be called.'
+        item_descriptions['input_items'] = 'List of input items required by the function.'
+        item_descriptions['input_item'] = 'Single input required by the function.'
+        item_descriptions['lookup_key'] = 'Data item/s to use as key/s in a lookup operation'
+        item_descriptions['lookup_keys'] = 'Data item/s to use as key/s in a lookup operation'
+        item_descriptions['lookup_items'] = 'Columns from a lookup to include as new items'
+        item_descriptions['lower_threshold'] = 'Lower threshold value for alert'
+        item_descriptions['output_alert'] = 'Item name for alert produced by function'
+        item_descriptions['output_item'] = 'Item name for output produced by function'
+        item_descriptions['output_items'] = 'Item names for outputs produced by function'
+        item_descriptions['upper_threshold'] = 'Upper threshold value for alert'
 
-        return itemDescriptions
+        return item_descriptions
 
     def _remove_cols_from_df(self, df, cols):
         '''
@@ -1324,6 +1323,7 @@ class BaseFunction(object):
         et.trace_append(created_by=self,
                         msg=msg,
                         log_method=log_method,
+                        df=df,
                         **kwargs)
 
     @classmethod
@@ -1778,6 +1778,8 @@ class BaseDBActivityMerge(BaseDataSource):
             additional_output_names = ['output_%s' % x for x in self.additional_items]
         self.additional_output_names = additional_output_names
         self.available_non_activity_cols = []
+        self.add_dates = []
+        self.custom_calendar_df = None
 
         super().__init__(input_items=input_activities, output_items=None,
                          dummy_items=dummy_items)
@@ -1788,7 +1790,7 @@ class BaseDBActivityMerge(BaseDataSource):
         self.outputs.extend(['activity_duration', 'additional_output_names'])
         self.optionalItems.extend(['additional_items'])
 
-    def execute(self, df):
+    def execute(self, df, start_ts=None, end_ts=None, entities=None):
 
         self.execute_by = [self._entity_type._entity_id]
         df = super().execute(df)
@@ -2319,13 +2321,13 @@ class BaseEstimatorFunction(BaseTransformer):
                 logger.debug(msg)
                 return True
             elif self.greater_is_better and model.eval_metric_test < self.stop_auto_improve_at:
-                msg = 'Training required because eval metric of %s is lower than threshold %s ' % (
-                model.eval_metric_test, self.stop_auto_improve_at)
+                msg = 'Training required because eval metric of %s is lower than threshold %s ' % \
+                      (model.eval_metric_test, self.stop_auto_improve_at)
                 logger.debug(msg)
                 return True
             elif not self.greater_is_better and model.eval_metric_test > self.stop_auto_improve_at:
-                msg = 'Training required because eval metric of %s is higher than threshold %s ' % (
-                model.eval_metric_test, self.stop_auto_improve_at)
+                msg = 'Training required because eval metric of %s is higher than threshold %s ' % \
+                      (model.eval_metric_test, self.stop_auto_improve_at)
                 logger.debug(msg)
                 return True
         else:
@@ -2423,8 +2425,8 @@ class BaseEstimatorFunction(BaseTransformer):
                                                 target=target,
                                                 features=features)
             eval_metric_train = estimator.score(df_train[features], df_train[target])
-            msg = 'Trained estimator %s with an %s score of %s' % (
-            self.__class__.__name__, metric_name, eval_metric_train)
+            msg = 'Trained estimator %s with an %s score of %s' % \
+                  (self.__class__.__name__, metric_name, eval_metric_train)
             logger.debug(msg)
             model = Model(name=self.get_model_name(target_name=target),
                           target=target,
@@ -2490,7 +2492,8 @@ class BaseEstimatorFunction(BaseTransformer):
                                     scoring=scorer, refit=True,
                                     cv=self.cv, return_train_score=False)
         estimator = search.fit(X=df_train[features], y=df_train[target])
-        msg = 'Used randomize search cross validation to find best hyper parameters for estimator %s' % estimator.__class__.__name__
+        msg = 'Used randomize search cross validation to find best hyper parameters for estimator %s' % \
+              estimator.__class__.__name__
         logger.debug(msg)
 
         return estimator
@@ -2499,7 +2502,8 @@ class BaseEstimatorFunction(BaseTransformer):
         '''
         Set the list of candidate estimators and associated parameters
         '''
-        # populate the estimators dict with a list of tuples containing instance of an estimator and parameters for estimator
+        # populate the estimators dict with a list of tuples containing instance of an estimator and
+        # parameters for estimator
         raise NotImplementedError('You must implement a set estimator method')
 
     def set_preprocessors(self):

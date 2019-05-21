@@ -370,15 +370,14 @@ class EntityType(object):
                     msg = ('Database table %s not found. Unable to create'
                            ' entity type instance. Provide a valid table name'
                            ' or use the auto_create_table = True keyword arg'
-                           ' to create a table. ' % (name))
+                           ' to create a table. ' % name)
                     raise ValueError(msg)
             # populate the data items metadata from the supplied columns
             if isinstance(self._data_items, list) and len(self._data_items) == 0:
                 self._data_items = self.build_item_metadata(self.table)
         else:
-            logger.warning((
-                'Created a logical entity type. It is not connected to a real database table, so it cannot perform any database operations.'
-            ))
+            logger.warning('Created a logical entity type. It is not connected to a real database table, so it '
+                           'cannot perform any database operations.')
 
         # add granularities
         for g in grains:
@@ -422,7 +421,7 @@ class EntityType(object):
         name = name.lower()
         table = db_module.ActivityTable(name, self.db, *args, **kwargs)
         try:
-            sqltable = self.db.get_table(name, self._db_schema)
+            self.db.get_table(name, self._db_schema)
         except KeyError:
             table.create()
         self.activity_tables[name] = table
@@ -454,7 +453,7 @@ class EntityType(object):
                                                   **kwargs)
 
         try:
-            sqltable = self.db.get_table(name, self._db_schema)
+            self.db.get_table(name, self._db_schema)
         except KeyError:
             table.create()
         self.scd[property_name] = table
@@ -500,7 +499,6 @@ class EntityType(object):
 
         try:
             input_set = set(obj.get_input_items())
-            logger.debug
         except AttributeError:
             input_set = set()
         else:
@@ -549,7 +547,6 @@ class EntityType(object):
                     input_set.add(arg_value)
 
                 logger.debug('Using input items %s for %s', arg_value, arg)
-
 
             elif type_ == 'OUTPUT_DATA_ITEM':
 
@@ -813,13 +810,13 @@ class EntityType(object):
             granularity = s.granularity
 
             if granularity is not None and isinstance(granularity, str):
-                granularity = self.granularities_dict.get(granularity, False)
+                granularity = self._granularities_dict.get(granularity, False)
                 if not granularity:
                     msg = ('Cannot build stage metdata. The granularity metadata'
                            ' is invalid. Granularity of function is %s. Valid '
                            ' granularities are %s' % (
                                granularity,
-                               list(self.granularities_dict.keys())
+                               list(self._granularities_dict.keys())
                            ))
                     raise StageException(msg, obj.name)
             elif isinstance(granularity, Granularity):
@@ -932,12 +929,11 @@ class EntityType(object):
                                           self._entity_id,
                                           self._timestamp)
                                        )
-            logger.debug(('Indexed dataframe on %s, %s'), self._df_index_entity_id,
+            logger.debug('Indexed dataframe on %s, %s', self._df_index_entity_id,
                          self._timestamp)
 
         else:
-            logger.debug(('Found existing index on %s, %s.'
-                          'No need to recreate index'), self._df_index_entity_id,
+            logger.debug('Found existing index on %s, %s. No need to recreate index', self._df_index_entity_id,
                          self._timestamp)
 
         # create a dummy column for _entity_id
@@ -1262,7 +1258,7 @@ class EntityType(object):
         except AttributeError:
             out = default
 
-        return
+        return out
 
     def get_end_ts_override(self):
         if self._end_ts_override is not None:
@@ -1369,10 +1365,6 @@ class EntityType(object):
         '''
         if entities is None:
             entities = [str(self._start_entity_id + x) for x in list(range(self._auto_entity_count))]
-        metrics = []
-        categoricals = []
-        dates = []
-        others = []
 
         if data_item_mean is None:
             data_item_mean = {}
@@ -1394,8 +1386,8 @@ class EntityType(object):
         else:
             (metrics, dates, categoricals, others) = self.db.get_column_lists_by_type(self.table, self._db_schema,
                                                                                       exclude_cols=exclude_cols)
-        msg = 'Generating data for %s with metrics %s and dimensions %s and dates %s' % (
-        self.name, metrics, categoricals, dates)
+        msg = 'Generating data for %s with metrics %s and dimensions %s and dates %s' % \
+              (self.name, metrics, categoricals, dates)
         logger.debug(msg)
 
         ts = TimeSeriesGenerator(metrics=metrics, ids=entities,
@@ -1424,23 +1416,23 @@ class EntityType(object):
                                 timestamp_col=self._timestamp)
 
         for (at_name, at_table) in list(self.activity_tables.items()):
-            adf = self.generate_activity_data(table_name=at_name,
-                                              activities=at_table._activities,
-                                              entities=entities,
-                                              days=days,
-                                              seconds=seconds,
-                                              write=write)
+            self.generate_activity_data(table_name=at_name,
+                                        activities=at_table._activities,
+                                        entities=entities,
+                                        days=days,
+                                        seconds=seconds,
+                                        write=write)
             msg = 'generated data for activity table %s' % at_name
             logger.debug(msg)
 
         for scd in list(self.scd.values()):
-            sdf = self.generate_scd_data(scd_obj=scd,
-                                         entities=entities,
-                                         days=days,
-                                         seconds=seconds,
-                                         write=write,
-                                         freq=scd_freq,
-                                         domains=data_item_domain)
+            self.generate_scd_data(scd_obj=scd,
+                                   entities=entities,
+                                   days=days,
+                                   seconds=seconds,
+                                   write=write,
+                                   freq=scd_freq,
+                                   domains=data_item_domain)
             msg = 'generated data for scd table %s' % scd.name
             logger.debug(msg)
 
@@ -1473,7 +1465,8 @@ class EntityType(object):
         cols = [x for x in df.columns if x not in ['duration', self._timestamp]]
         df = df[cols]
         if write:
-            msg = 'Generated %s rows of data and inserted into %s' % (len(df.index), table_name)
+            msg = 'Generated %s rows of data and will inserted into %s' % (len(df.index), table_name)
+            logger.debug(msg)
             self.db.write_frame(table_name=table_name, df=df, schema=self._db_schema)
         return df
 
@@ -1523,8 +1516,8 @@ class EntityType(object):
         Get the last checkpoint recorded for entity type
         '''
         if self.db is None:
-            msg = ('Entity type has no db connection. Local entity'
-                   ' types do not have a checkpoint')
+            msg = ('Entity type has no db connection. Local entity types do not have a checkpoint')
+            logger.info(msg)
             return None
 
         (query, table) = self.db.query_column_aggregate(
@@ -1779,8 +1772,9 @@ class EntityType(object):
         
         Parameters
         ----------
-        credentials: dict
-            credentials for the ICS metadata service
+        publish_kpis: bool
+
+        raise_error: bool
 
         '''
 
@@ -1819,7 +1813,7 @@ class EntityType(object):
                     data_type = 'TIMESTAMP'
                 else:
                     data_type = str(data_type)
-                    logger.warning('Unknown datatype %s for column %s' % (data_type, c))
+                    logger.warning('Unknown datatype %s for column %s' % (data_type, column_name))
                 columns.append({
                     'name': column_name,
                     'type': col_type,
@@ -2350,7 +2344,7 @@ class Granularity(object):
         self.timestamp = timestamp
 
         if table_name is None:
-            table_name = (('dm_%s_%s') % (self.entity_name, self.name)).lower()
+            table_name = ('dm_%s_%s' % (self.entity_name, self.name)).lower()
         self.table_name = table_name
 
         if dimensions is None:
@@ -2436,7 +2430,7 @@ class Trace(object):
             self.stop()
         self.data = []
         if name is None:
-            name = self._trace.build_trace_name()
+            name = self.build_trace_name()
         self.name = name
         logger.debug('Started a new trace %s ', self.name)
         if self.auto_save is not None and self.auto_save > 0:
@@ -2497,7 +2491,7 @@ class Trace(object):
         Stop autosave thead
         '''
         self.auto_save = None
-        if not self.stop_event is None:
+        if self.stop_event is not None:
             self.stop_event.set()
         if self.auto_save_thread is not None:
             self.auto_save_thread.join()
@@ -2662,7 +2656,7 @@ class Model(object):
 
     def predict(self, df):
         result = self.estimator.predict(df[self.features])
-        msg = 'predicted using model %s' % (self.name)
+        msg = 'predicted using model %s' % self.name
         logger.info(msg)
         return result
 

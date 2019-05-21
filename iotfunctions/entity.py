@@ -14,8 +14,6 @@ The entity module contains sample entity types
 
 import logging
 import datetime as dt
-import json
-import importlib
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, func
 
 from . import metadata
@@ -59,14 +57,12 @@ class Boiler(metadata.BaseCustomEntityType):
         # granularities
         granularities = []
 
-        columns = []
-        # columns
-        columns.append(Column('company_code', String(50)))
-        columns.append(Column('temp_set_point', Float()))
-        columns.append(Column('pressure', Float()))
-        columns.append(Column('input_flow_rate', Float()))
-        columns.append(Column('fuel_flow_rate', Float()))
-        columns.append(Column('air_flow_rate', Float()))
+        columns = [Column('company_code', String(50)),
+                   Column('temp_set_point', Float()),
+                   Column('pressure', Float()),
+                   Column('input_flow_rate', Float()),
+                   Column('fuel_flow_rate', Float()),
+                   Column('air_flow_rate', Float())]
 
         functions = []
         # simulation settings
@@ -157,10 +153,9 @@ class Robot(metadata.BaseCustomEntityType):
         granularities = []
 
         # columns
-        columns = []
-        columns.append(Column('plant_code', String(50)))
-        columns.append(Column('torque', Float()))
-        columns.append(Column('load', Float()))
+        columns = [Column('plant_code', String(50)),
+                   Column('torque', Float()),
+                   Column('load', Float())]
 
         # functions
         functions = []
@@ -290,11 +285,10 @@ class PackagingHopper(metadata.BaseCustomEntityType):
         constants = []
         granularities = []
 
-        columns = []
-        columns.append(Column('company_code', String(50)))
-        columns.append(Column('product_code', String(50)))
-        columns.append(Column('ambient_temp', Float()))
-        columns.append(Column('ambient_humidity', Float()))
+        columns = [Column('company_code', String(50)),
+                   Column('product_code', String(50)),
+                   Column('ambient_temp', Float()),
+                   Column('ambient_humidity', Float())]
 
         functions = []
 
@@ -334,12 +328,10 @@ class PackagingHopper(metadata.BaseCustomEntityType):
             alert_name='anomaly_in_fill_detected'))
 
         # dimension columns
-        dimension_columns = [
-            Column('firmware', String(50)),
-            Column('manufacturer', String(50)),
-            Column('plant', String(50)),
-            Column('line', String(50))
-        ]
+        dimension_columns = [Column('firmware', String(50)),
+                             Column('manufacturer', String(50)),
+                             Column('plant', String(50)),
+                             Column('line', String(50))]
 
         super().__init__(name=name,
                          db=db,
@@ -365,11 +357,10 @@ class SourdoughLeavening(metadata.BaseCustomEntityType):
         constants = []
         granularities = []
 
-        columns = []
-        columns.append(Column('company_code', String(50)))
-        columns.append(Column('product_code', String(50)))
-        columns.append(Column('ambient_temp', Float()))
-        columns.append(Column('ambient_humidity', Float()))
+        columns = [Column('company_code', String(50)),
+                   Column('product_code', String(50)),
+                   Column('ambient_temp', Float()),
+                   Column('ambient_humidity', Float())]
 
         functions = []
         # simulation settings
@@ -413,12 +404,10 @@ class SourdoughLeavening(metadata.BaseCustomEntityType):
         ))
 
         # dimension columns
-        dimension_columns = [
-            Column('firmware', String(50)),
-            Column('manufacturer', String(50)),
-            Column('plant', String(50)),
-            Column('line', String(50))
-        ]
+        dimension_columns = [Column('firmware', String(50)),
+                             Column('manufacturer', String(50)),
+                             Column('plant', String(50)),
+                             Column('line', String(50))]
 
         super().__init__(name=name,
                          db=db,
@@ -442,14 +431,13 @@ class TestBed(metadata.BaseCustomEntityType):
                  description=None,
                  generate_days=0,
                  drop_existing=False):
-        columns = []
-        columns.append(Column('str_1', String(50)))
-        columns.append(Column('str_2', String(50)))
-        columns.append(Column('x_1', Float()))
-        columns.append(Column('x_2', Float()))
-        columns.append(Column('x_3', Float()))
-        columns.append(Column('date_1', DateTime))
-        columns.append(Column('date_2', DateTime))
+        columns = [Column('str_1', String(50)),
+                   Column('str_2', String(50)),
+                   Column('x_1', Float()),
+                   Column('x_2', Float()),
+                   Column('x_3', Float()),
+                   Column('date_1', DateTime),
+                   Column('date_2', DateTime)]
 
         day = metadata.Granularity(
             name='day',
@@ -461,13 +449,10 @@ class TestBed(metadata.BaseCustomEntityType):
         )
         granularities = [day]
 
-        constants = []
-        constants.append(ui.UISingle(name='alpha',
-                                     description='Sample single valued parameter',
-                                     datatype=float,
-                                     default=0.3)
-                         )
-
+        constants = [ui.UISingle(name='alpha',
+                                 description='Sample single valued parameter',
+                                 datatype=float,
+                                 default=0.3)]
         functions = []
 
         generator = bif.EntityDataGenerator(ids=None)
@@ -574,11 +559,9 @@ class TestBed(metadata.BaseCustomEntityType):
         ))
 
         # aggregates
-        day_functions = []
-        day_functions.append(bif.AggregateItems(
-            input_items=['x_1', 'x_2'],
-            aggregation_function='sum',
-            output_items=['x_1_sum_day', 'x_2_sum_day']))
+        day_functions = [bif.AggregateItems(input_items=['x_1', 'x_2'],
+                                            aggregation_function='sum',
+                                            output_items=['x_1_sum_day', 'x_2_sum_day'])]
 
         for f in day_functions:
             f.granularity = day.name

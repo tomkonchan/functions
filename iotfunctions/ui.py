@@ -94,9 +94,11 @@ class UIFunctionOutMulti(BaseUIControl):
     name : str
         Name of function argument
     cardinality_from: str
-        Name of input argument that defines the number of items to expect from this array output. Specify an array input.
+        Name of input argument that defines the number of items to expect from this array output. Specify
+        an array input.
     is_datatype_derived: bool
-        Specify true when the output datatypes are the same as the datatypes of the input array that drives this output array.
+        Specify true when the output datatypes are the same as the datatypes of the input array that drives
+        this output array.
     datatype: python datatype object
         Used to validate UI input. e.g. str, float, dt.datetime, bool
     description: str
@@ -129,7 +131,7 @@ class UIFunctionOutMulti(BaseUIControl):
 
     def to_metadata(self):
 
-        if not self.datatype is None:
+        if self.datatype is not None:
             datatype = [self.datatype]
         else:
             datatype = None
@@ -286,7 +288,7 @@ class UIMultiItem(BaseUIControl):
     def to_output_metadata(self):
 
         if self.output_item is not None:
-            if not self.output_datatype is None:
+            if self.output_datatype is not None:
                 datatype = [self.convert_datatype(self.output_datatype)]
             else:
                 datatype = None
@@ -534,8 +536,7 @@ class UIExpression(UIText):
         Optional default
     '''
 
-    def __init__(self, name='expression', description=None, tags=None,
-                 required=True, default=None):
+    def __init__(self, name='expression', description=None, tags=None, required=True, default=None):
 
         if description is None:
             description = 'Enter a python expression'

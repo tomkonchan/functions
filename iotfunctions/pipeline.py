@@ -107,7 +107,7 @@ class DataAggregator(object):
         gfs = []
         group = df.groupby(self._granularity.grouper)
 
-        if not self._agg_dict is None and self._agg_dict:
+        if self._agg_dict is not None and self._agg_dict:
             gf = group.agg(self._agg_dict)
             gfs.append(gf)
         for s in self._complex_aggregators:
@@ -119,8 +119,6 @@ class DataAggregator(object):
 
         logger.info('Completed aggregation: %s', self._granularity.name)
         return df
-
-        return
 
 
 class DataMerge(object):
@@ -156,7 +154,7 @@ class DataMerge(object):
     def __str__(self):
 
         out = ('DataMerge object has data structures: dataframe with %s rows'
-               ' and %s constants ' % (len(df.index), len(constants)))
+               ' and %s constants ' % (len(self.df.index), len(self.constants)))
 
         return out
 
@@ -277,7 +275,7 @@ class DataMerge(object):
             self.df = pd.DataFrame()
 
         if len(self.df.index) > 0:
-            logger.debug(('Input dataframe has columns %s and index %s'),
+            logger.debug('Input dataframe has columns %s and index %s',
                          list(self.df.columns),
                          self.get_index_names())
             existing = 'empty df'
@@ -285,8 +283,7 @@ class DataMerge(object):
         job_constants = list(self.constants.keys())
 
         if len(job_constants) > 0:
-            logger.debug(('The job has constant output items %s'),
-                         [x for x in job_constants])
+            logger.debug('The job has constant output items %s', job_constants)
 
         if isinstance(obj, (dict, OrderedDict)):
             raise MergeError(('Function error.'
@@ -342,7 +339,7 @@ class DataMerge(object):
                 col_names = [df.name]
             df = df.to_frame()
         else:
-            if (col_names is None):
+            if col_names is None:
                 col_names = list(df.columns)
             else:
                 if len(col_names) == len(df.columns):
@@ -435,12 +432,9 @@ class DataMerge(object):
         else:
             logger.debug('Function error. Could not auto merge')
             if len(obj_index_names) == 0:
-                raise ValueError(('Function error.'
-                                  'Attempting to merge a dataframe that has'
-                                  ' an un-named index. Set the index name.'
-                                  ' Index name/s may include any of the following'
-                                  ' columns: %s'
-                                  % (df_valid_names)))
+                raise ValueError('Function error. Attempting to merge a dataframe that has  an un-named index. '
+                                 'Set the index name. Index name/s may include any of the following columns: %s'
+                                 % df_valid_names)
             raise ValueError((
                     'Function error.'
                     ' Auto merge encountered a dataframe that could not'
@@ -466,7 +460,7 @@ class DataMerge(object):
         if len(col_names) == 1:
             # if the source dataframe is empty, it has no index
             # the data merge object can only accept a constant
-            if len(df.index) == 0:
+            if len(self.df.index) == 0:
                 self.add_constant(col_names[0], obj)
             else:
                 try:
@@ -596,7 +590,7 @@ class DataReader(object):
 
     def get_output_list(self):
 
-        if not self._projection_list is None:
+        if self._projection_list is not None:
             outputs = self._projection_list
             logger.debug(('The get_data() method of the payload will return'
                           ' data items %s using a projection list set by'
@@ -633,7 +627,7 @@ class DataWriterException(Exception):
         super().__init__(msg)
 
 
-class Db2DataWriter():
+class Db2DataWriter:
     '''
     Stage that writes the calculated data items to database.
     '''
@@ -755,8 +749,8 @@ class Db2DataWriter():
                     row.append(None)
 
                 if item_type == DATA_ITEM_TYPE_NUMBER:
-                    myFloat = float(derived_value)
-                    row.append(myFloat if np.isfinite(myFloat) else None)
+                    my_float = float(derived_value)
+                    row.append(my_float if np.isfinite(my_float) else None)
                 else:
                     row.append(None)
 
@@ -903,26 +897,26 @@ class Db2DataWriter():
             if grain.dimensions is not None:
                 dimensions.extend(grain.dimensions)
 
-        colExtension = ''
-        parmExtension = ''
+        col_extension = ''
+        parm_extension = ''
 
         for dimension in dimensions:
-            quoted_dimension = dbhelper.quotingColumnName(dimension)
-            colExtension += ', ' + quoted_dimension
-            parmExtension += ', ?'
+            quoted_dimension = dbhelper.quoting_column_name(dimension)
+            col_extension += ', ' + quoted_dimension
+            parm_extension += ', ?'
 
         stmt = ('INSERT INTO %s.%s (KEY%s, VALUE_B, VALUE_N, VALUE_S, VALUE_T, LAST_UPDATE) ' +
                 'VALUES (?%s, ?, ?, ?, ?, CURRENT TIMESTAMP)') % \
-               (dbhelper.quotingSchemaName(self.schema_name),
-                dbhelper.quotingTableName(table_name),
-                colExtension,
-                parmExtension)
+               (dbhelper.quoting_schema_name(self.schema_name),
+                dbhelper.quoting_table_name(table_name),
+                col_extension,
+                parm_extension)
 
         return stmt
 
     def create_delete_statement(self, table_name):
         stmt = ('DELETE FROM %s.%s' %
-                (dbhelper.quotingSchemaName(self.schema_name), dbhelper.quotingTableName(table_name)))
+                (dbhelper.quoting_schema_name(self.schema_name), dbhelper.quoting_table_name(table_name)))
         where1 = ('%s >= %s' % (KPI_TIMESTAMP_COLUMN, ' ? '))
         where2 = ('%s < %s' % (KPI_TIMESTAMP_COLUMN, ' ? '))
         stmt = '%s WHERE %s AND %s' % (stmt, where1, where2)
@@ -975,29 +969,23 @@ class JobLog(object):
                           name,
                           schedule):
 
-        q = self.table.select(). \
-            where(and_(
-            self.table.c.object_type == self.job.payload.__class__.__name__,
-            self.table.c.object_name == name,
-            self.table.c.schedule == schedule,
-            self.table.c.status == 'running'
-        ))
+        q = self.table.select().\
+            where(and_(self.table.c.object_type == self.job.payload.__class__.__name__,
+                       self.table.c.object_name == name,
+                       self.table.c.schedule == schedule,
+                       self.table.c.status == 'running'))
         df = pd.read_sql(sql=q, con=self.db.connection)
 
         if len(df.index) > 0:
             upd = self.table.update().values(status='abandoned'). \
-                where(and_(
-                self.table.c.object_type == self.job.payload.__class__.__name__,
-                self.table.c.object_name == name,
-                self.table.c.schedule == schedule,
-                self.table.c.status == 'running'
-            ))
+                where(and_(self.table.c.object_type == self.job.payload.__class__.__name__,
+                           self.table.c.object_name == name,
+                           self.table.c.schedule == schedule,
+                           self.table.c.status == 'running'))
 
             self.db.connection.execute(upd)
             logger.debug(
-                'Marked existing running jobs as abandoned  (%s,%s)',
-                name, schedule
-            )
+                'Marked existing running jobs as abandoned  (%s,%s)', name, schedule)
             logger.debug(df)
             self.db.commit()
 
@@ -1040,12 +1028,10 @@ class JobLog(object):
             values['next_execution_date'] = next_execution_date
         if values:
             upd = self.table.update(). \
-                where(and_(
-                self.table.c.object_type == self.job.payload.__class__.__name__,
-                self.table.c.object_name == name,
-                self.table.c.schedule == schedule,
-                self.table.c.execution_date == execution_date
-            )). \
+                where(and_(self.table.c.object_type == self.job.payload.__class__.__name__,
+                           self.table.c.object_name == name,
+                           self.table.c.schedule == schedule,
+                           self.table.c.execution_date == execution_date)).\
                 values(**values)
 
             self.db.connection.execute(upd)
@@ -1118,9 +1104,9 @@ class JobController(object):
         set_param() method on the EntityType set the parameter.
         
         Functions executed have access to this parameter as follows:
-        >>> entity_type = self.get_entity_type()
-        >>> if entity_type.is_training_mode:
-        >>>     #do something special
+        > entity_type = self.get_entity_type()
+        > if entity_type.is_training_mode:
+        >     #do something special
     
     '''
     # tupple has freq round hour,round minute, backtrack
@@ -1184,7 +1170,7 @@ class JobController(object):
             ))
         else:
             logger.info('Initialized job.\n')
-            logger.info(str((self)))
+            logger.info(str(self))
 
     def __str__(self):
 
@@ -1337,7 +1323,7 @@ class JobController(object):
             build_metadata['required_inputs'] |= set(inputs)
             build_metadata['available_colums'] |= set(outputs)
 
-            logger.debug(('Collapsed aggregation stages %s down to a single"'),
+            logger.debug('Collapsed aggregation stages %s down to a single"',
                          [x.name for x in collapsed_stages]
                          )
             logger.debug(agg_dict)
@@ -1408,7 +1394,7 @@ class JobController(object):
         logger.debug('Build of job spec is complete.')
         logger.debug('-------------------------------')
         for section, stages in list(job_spec.items()):
-            logger.debug('%s:>>>' % (section))
+            logger.debug('%s:>>>' % section)
             for s in stages:
                 logger.info('  %s', str(s))
         logger.debug('-------------------------------')
@@ -1483,7 +1469,7 @@ class JobController(object):
             if len(stages_added) == 0:
                 break
             else:
-                logger.debug(('Gathered stages of type %s. Iteration %s: %s'),
+                logger.debug('Gathered stages of type %s. Iteration %s: %s',
                              stage_type, i, [str(x) for x in stages_added])
             # maintain a set of cols for each data source stage
             for stage, cols in data_source_col_list.items():
@@ -1536,13 +1522,10 @@ class JobController(object):
                                        exclude_stages=[])
         all_stages.extend(stages)
         for s in stages:
-            aggregation_method = self.exec_stage_method(
-                s,
-                'get_aggregation_method', None)
+            aggregation_method = self.exec_stage_method(s, 'get_aggregation_method', None)
             if aggregation_method is None:
-                msg = ('Error building aggregation function %s.'
-                       ' An aggregation stages requires a method called'
-                       ' get_aggregation_method()') % (s.name)
+                msg = 'Error building aggregation function %s. An aggregation stages requires a method called ' \
+                      'get_aggregation_method()' % s.name
                 raise StageException(msg, s.name)
 
             input_items = list(s._input_set)
@@ -1837,11 +1820,13 @@ class JobController(object):
             try:
                 next_execution = self.get_next_future_execution(schedule_metadata)
             except BaseException as e:
-                raise_error(exception=e,
-                            msg='Error getting next future scheduled execution',
-                            stageName='get_next_future_execution',
-                            raise_error=True
-                            )
+                self.handle_failed_execution(
+                    meta,
+                    message='Error getting next future scheduled execution',
+                    exception=e,
+                    stageName='get_next_future_execution',
+                    raise_error=True
+                )
             meta['next_future_execution'] = next_execution
 
             # if there is no future execution that fits withing the timeframe
@@ -1959,7 +1944,7 @@ class JobController(object):
                                 ' from its _output_list property. All functions'
                                 ' should have a list containing at least one'
                                 ' output item. This list is populated automatically '
-                                ' using registration metadata and function args ' % (s.name)
+                                ' using registration metadata and function args ' % s.name
                         )
                         raise StageException(msg, s.name)
 
@@ -2034,23 +2019,22 @@ class JobController(object):
     def exec_payload_method(self, method_name, default_output, **kwargs):
 
         try:
-            return (getattr(self.payload, method_name)(**kwargs))
+            return getattr(self.payload, method_name)(**kwargs)
         except (TypeError, AttributeError):
             logger.debug(('Returned default output for %s() on'
                           ' payload %s %s. '
                           ' Default value is: %s'), method_name,
                          self.payload.__class__.__name__, self.payload.name,
                          default_output)
-            return (default_output)
+            return default_output
 
     def exec_stage_method(self, stage, method_name, default_output, **kwargs):
 
         try:
-            return (getattr(stage, method_name)(**kwargs))
+            return getattr(stage, method_name)(**kwargs)
         except (TypeError, AttributeError) as e:
-            logger.debug(('No method %s on %s returning default %s. %s'),
-                         method_name, stage.name, default_output, e)
-            return (default_output)
+            logger.debug('No method %s on %s returning default %s. %s', method_name, stage.name, default_output, e)
+            return default_output
 
     def evaluate_schedules(self, execute_date):
         '''
@@ -2201,7 +2185,7 @@ class JobController(object):
 
     @classmethod
     def get_agg_stage_types(cls):
-        return (['simple_aggregate', 'complex_aggregate'])
+        return ['simple_aggregate', 'complex_aggregate']
 
     def get_chunks(self,
                    start_date,
@@ -2224,15 +2208,10 @@ class JobController(object):
             start_date = self.exec_payload_method('get_early_timestamp',
                                                   None)
             if start_date is not None:
-                logger.debug(
-                    'Early timestamp obtained from payload as %s'
-                    , start_date)
+                logger.debug('Early timestamp obtained from payload as %s', start_date)
             else:
-                logger.debug((
-                    'The payload does not have an get_early_timestamp'
-                    ' method or the method did not retrieve an early'
-                    ' timestamp. Data will be retrieved in a single '
-                    'chunk'))
+                logger.debug('The payload does not have an get_early_timestamp method or the method did not '
+                             'retrieve an early timestamp. Data will be retrieved in a single chunk')
                 chunks = [(None, end_date)]
 
         if len(chunks) == 0:
@@ -2372,10 +2351,7 @@ class JobController(object):
         try:
             out = getattr(stage, param)
         except AttributeError:
-            '''
-            logger.debug(('No %s property on %s using default %s'),
-                          param, stage.name, default )
-            '''
+            logger.debug('No %s property on %s using default %s', param, stage.name, default)
             out = default
         return out
 
@@ -2480,7 +2456,7 @@ class JobController(object):
 
         trace = self.get_payload_param('_trace', None)
 
-        if not trace is None:
+        if trace is not None:
             self.trace_error(
                 exception=exception,
                 created_by=self,
@@ -2537,7 +2513,7 @@ class JobController(object):
         message = message + err_info.get(exception.__class__.__name__, '')
 
         trace = self.get_payload_param('_trace', None)
-        if not trace is None:
+        if trace is not None:
             self.trace_error(
                 exception=exception,
                 created_by=stage,
@@ -2592,7 +2568,7 @@ class JobController(object):
 
         trace = self.get_payload_param('_trace', None)
 
-        if not trace is None:
+        if trace is not None:
             self.trace_error(
                 exception=exception,
                 created_by=self,
@@ -2629,17 +2605,11 @@ class JobController(object):
         '''
 
         if schedule_metadata['is_subsumed']:
-            logger.debug((
-                'Schedule %s skipped as the job controller is using a'
-                ' progressive schedule and this schedule is subsumed by'
-                ' another.'), schedule
-            )
+            logger.debug('Schedule %s skipped as the job controller is using a progressive schedule and this '
+                         'schedule is subsumed by another.', schedule)
         else:
-            logger.debug((
-                'Hang tight. Schedule %s is only due for execution on %s.')
-                , schedule,
-                schedule_metadata['adjusted_exec_date']
-            )
+            logger.debug('Hang tight. Schedule %s is only due for execution on %s.', schedule,
+                         schedule_metadata['adjusted_exec_date'])
 
     def log_start(self, metadata,
                   status='running',
@@ -2745,8 +2715,6 @@ class JobController(object):
 
         if raise_error is None:
             raise_error = self.get_payload_param('_abort_on_fail', True)
-
-        can_proceed = False
 
         msg = ('Execution of job failed. %s failed due to %s'
                ' Error message: %s '
@@ -3030,6 +2998,7 @@ class CalcPipeline:
         for p in preload_stages:
             if not self.entity_type._is_preload_complete:
                 msg = 'Stage %s :' % p.__class__.__name__
+                self.trace_add(msg)
                 status = p.execute(df=None, start_ts=start_ts, end_ts=end_ts, entities=entities)
                 msg = '%s completed as pre-load. ' % p.__class__.__name__
                 self.trace_add(msg)
@@ -3038,7 +3007,8 @@ class CalcPipeline:
                 try:
                     preload_item_names.append(p.output_item)
                 except AttributeError:
-                    msg = 'Preload functions are expected to have an argument and property called output_item. This preload function is not defined correctly'
+                    msg = 'Preload functions are expected to have an argument and property called output_item. ' \
+                          'This preload function is not defined correctly'
                     raise AttributeError(msg)
                 if not status:
                     msg = 'Preload stage %s returned with status of False. Aborting execution. ' % p.__class__.__name__
@@ -3110,10 +3080,10 @@ class CalcPipeline:
             else:
                 remaining_stages.append(s)
         if replace_count > 1:
-            self.logger.warning(
-                "The pipeline has more than one custom source with a merge strategy of replace. The pipeline will only contain data from the last replacement")
+            self.logger.warning("The pipeline has more than one custom source with a merge strategy of replace. "
+                                "The pipeline will only contain data from the last replacement")
 
-            # execute secondary data sources
+        # execute secondary data sources
         if len(secondary_sources) > 0:
             for s in secondary_sources:
                 msg = 'Processing secondary data source %s. ' % s.__class__.__name__
@@ -3146,12 +3116,12 @@ class CalcPipeline:
         return (df, remaining_stages)
 
     def execute(self, df=None, to_csv=False, dropna=False, start_ts=None, end_ts=None, entities=None,
-                preloaded_item_names=None,
-                register=False):
+                preloaded_item_names=None, register=False):
         '''
         Execute the pipeline using an input dataframe as source.
         '''
-        # preload may  have already taken place. if so pass the names of the items produced by stages that were executed prior to loading.
+        # preload may  have already taken place. if so pass the names of the items produced by stages that
+        # were executed prior to loading.
         if preloaded_item_names is None:
             preloaded_item_names = []
         msg = 'Executing pipeline with %s stages.' % len(self.stages)
@@ -3169,10 +3139,10 @@ class CalcPipeline:
         if end_ts_override is not None:
             end_ts = end_ts_override
         if is_initial_transform:
-            if not start_ts is None:
+            if start_ts is not None:
                 msg = 'Start timestamp: %s.' % start_ts
                 self.trace_add(msg)
-            if not end_ts is None:
+            if end_ts is not None:
                 msg = 'End timestamp: %s.' % end_ts
                 self.trace_add(msg)
                 # process preload stages first if there are any
@@ -3287,18 +3257,17 @@ class CalcPipeline:
                            created_by=stage)
             self.entity_type.raise_error(exception=e, abort_on_fail=abort_on_fail, stageName=name)
         except SyntaxError as e:
-            self.trace_add(
-                'The function %s contains a syntax error. If the function configuration includes a type-in expression, make sure that this expression is correct. ' % name,
-                created_by=stage)
+            self.trace_add('The function %s contains a syntax error. If the function configuration includes a '
+                           'type-in expression, make sure that this expression is correct. ' % name, created_by=stage)
             self.entity_type.raise_error(exception=e, abort_on_fail=abort_on_fail, stageName=name)
         except (ValueError, TypeError) as e:
             self.trace_add('The function %s is operating on data that has an unexpected value or data type. ' % name,
                            created_by=stage)
             self.entity_type.raise_error(exception=e, abort_on_fail=abort_on_fail, stageName=name)
         except NameError as e:
-            self.trace_add(
-                'The function %s referred to an object that does not exist. You may be referring to data items in pandas expressions, ensure that you refer to them by name, ie: as a quoted string. ' % name,
-                created_by=stage)
+            self.trace_add('The function %s referred to an object that does not exist. You may be referring to '
+                           'data items in pandas expressions, ensure that you refer to them by name, ie: as a '
+                           'quoted string. ' % name, created_by=stage)
             self.entity_type.raise_error(exception=e, abort_on_fail=abort_on_fail, stageName=name)
         except BaseException as e:
             self.trace_add('The function %s failed to execute. ' % name, created_by=stage)
@@ -3313,7 +3282,8 @@ class CalcPipeline:
             try:
                 stage.register(df=df, new_df=newdf)
             except AttributeError as e:
-                msg = 'Could not export %s as it has no register() method or because an AttributeError was raised during execution' % name
+                msg = 'Could not export %s as it has no register() method or because an AttributeError was ' \
+                      'raised during execution' % name
                 logger.warning(msg)
                 logger.warning(str(e))
         if dropna:
@@ -3418,7 +3388,7 @@ class CalcPipeline:
         Replace existing stages with a new list of stages
         '''
         self.stages = []
-        if not stages is None:
+        if stages is not None:
             if not isinstance(stages, list):
                 stages = [stages]
             self.stages.extend(stages)
@@ -3480,33 +3450,30 @@ class CalcPipeline:
             logger.warning('Output dataframe has no rows of data')
 
         if not validation_result['input']['is_index_0_str']:
-            logger.warning(
-                'Input dataframe index does not conform. First part not a string called %s' % self.entity_type._df_index_entity_id)
+            logger.warning('Input dataframe index does not conform. First part not a string called %s' %
+                           self.entity_type._df_index_entity_id)
         if not validation_result['output']['is_index_0_str']:
-            logger.warning(
-                'Output dataframe index does not conform. First part not a string called %s' % self.entity_type._df_index_entity_id)
+            logger.warning('Output dataframe index does not conform. First part not a string called %s' %
+                           self.entity_type._df_index_entity_id)
 
         if not validation_result['input']['is_index_1_datetime']:
-            logger.warning(
-                'Input dataframe index does not conform. Second part not a string called %s' % self.entity_type._timestamp)
+            logger.warning('Input dataframe index does not conform. Second part not a string called %s' %
+                           self.entity_type._timestamp)
         if not validation_result['output']['is_index_1_datetime']:
-            logger.warning(
-                'Output dataframe index does not conform. Second part not a string called %s' % self.entity_type._timestamp)
+            logger.warning('Output dataframe index does not conform. Second part not a string called %s' %
+                           self.entity_type._timestamp)
 
-        mismatched_type = False
         for dtype, cols in list(validation_types['input'].items()):
             try:
                 missing = cols - validation_types['output'][dtype]
             except KeyError:
-                mismatched_type = True
                 msg = 'Output dataframe has no columns of type %s. Type has changed or column was dropped.' % dtype
+                logger.warning(msg)
             else:
                 if len(missing) != 0:
-                    msg = 'Output dataframe is missing columns %s of type %s. Either the type has changed or column was dropped' % (
-                        missing, dtype)
-                    mismatched_type = True
-            if mismatched_type:
-                logger.warning(msg)
+                    msg = 'Output dataframe is missing columns %s of type %s. Either the type has changed or ' \
+                          'column was dropped' % (missing, dtype)
+                    logger.warning(msg)
 
         self.check_data_items_type(df=output_df, items=self.entity_type.get_data_items())
 
@@ -3515,8 +3482,9 @@ class CalcPipeline:
     def check_data_items_type(self, df, items):
         '''
         Check if dataframe columns type is equivalent to the data item that is defined in the metadata
-        It checks the entire list of data items. Thus, depending where this code is executed, the dataframe might not be completed.
-        An exception is generated if there are not incompatible types of matching items AND and flag throw_error is set to TRUE
+        It checks the entire list of data items. Thus, depending where this code is executed, the dataframe might
+        not be completed. An exception is generated if there are not incompatible types of matching items AND
+        and flag throw_error is set to TRUE
         '''
 
         invalid_data_items = list()
