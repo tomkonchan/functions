@@ -3,8 +3,8 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='iotfunctions',
-    version='1.1.4',
+    name='custom',
+    version='0.0.1',
     packages=find_packages(),
     install_requires=['dill'
     ],
