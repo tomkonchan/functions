@@ -24,7 +24,7 @@ db_schema = None
 db = Database(credentials=credentials)
 
 '''
-Import and instantiate the functions to be tested
+Import and instantiate the functions to be tested 
 
 The local test will generate data instead of using server data.
 By default it will assume that the input data items are numeric.
