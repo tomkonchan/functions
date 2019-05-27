@@ -37,6 +37,11 @@ GSYMS
 GTAGS
 .cache
 
+# virtual env #
+###############
+venv/
+
+
 # Compiled source #
 ###################
 *.a
